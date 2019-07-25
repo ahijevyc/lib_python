@@ -491,39 +491,10 @@ def add_wind_rad_lines(row, rad_nm, fullcircle=False, debug=False):
     
     return lines
 
-def update_row(row, raw_vmax_kts, raw_RMW_nm, raw_minp, rad_nm, debug=False):
-
-    # TODO Call with origgridWRF, origgrid, and mpas.origmesh 
-
-    if debug:
-        print("atcf.update_row: before update\n", row[['valid_time','lon','lat', 'vmax', 'minp', 'rmw']]) 
-    row["vmax"] = raw_vmax_kts
-    row["minp"] = raw_minp
-    row["rmw"]  = raw_RMW_nm
-    # Add note of original mesh = True in user data (not defined) column
-    if 'origmeshTrue' not in row.userdata:
-        moreuserdata = 'origmeshTrue wind_radii_method '+ rad_nm["wind_radii_method"]
-        if debug:
-            print("appending "+moreuserdata+" to row.userdata")
-        row.userdata += moreuserdata
-    if debug:
-        print('after', row[['vmax', 'minp', 'rmw']]) 
-
-    # Return row if vmax < 34 kts
-    if rad_nm['raw_vmax_kts'] < 34:
-        return row
-
-    # Make 34/50/64 knot rows
-    newrows = add_wind_rad_lines(row, rad_nm, debug=debug)
-    if debug:
-        print("changed", row, " to ", newrows)
-    return newrows
-
-
 
 def update_df(df, row, raw_vmax_kts, raw_RMW_nm, raw_minp, rad_nm, gridfile=None, debug=False):
 
-    # TODO: Use update_row instead. add gridfile to update_row
+    # TODO: Rewrite function so only row is needed. Why pass entire dataframe df?
     # Called by origgrid and origmesh
 
     if debug:
@@ -619,90 +590,6 @@ def write(ofile, df, fullcircle=False, debug=False):
 
     atcf_lines = atcf_lines.replace("nan","   ")
 
-    if False:
-
-        # I couldn't get this section to work. 
-        # The pandas to_string method inexplicibly padded some columns with an extra space that had to be removed later.
-
-        # Valid time is not part of ATCF file.
-        del(df["valid_time"])
-
-        # Had to add parentheses () to .len to not get error about instancemethod not being iterable.
-        if max(df.cy.str.len()) > 2:
-            print('cy more than 2 characters. Truncating...')
-            # Append full CY to userdata column (after a comma)
-            df['userdata'] = df['userdata'] + ', ' + df['cy']
-            # Keep first 2 characters
-            df['cy'] = df['cy'].str.slice(0,2)
-        formatters={
-                "basin": '{},'.format,
-                # The problem with CY is ATCF only reserves 2 characters for it.
-                "cy": lambda x: x.zfill(2)+"," , # not always an integer (e.g. 10E) # 20181116 force to be integer
-                # Convert initial_time from datetime to string.
-                "initial_time":lambda x: x.strftime('%Y%m%d%H,'),
-                "technum":'{},'.format,
-                "model":'{},'.format,
-                "fhr":'{:3.0f},'.format,
-                "lat":lat2s, 
-                "lon":lon2s, 
-                "vmax":'{:3.0f},'.format,
-                "minp":'{:4.0f},'.format,
-                "ty":'{},'.format,
-                "windcode":'{:>3s},'.format,
-                "rad":'{:3.0f},'.format,
-                "rad1":'{:4.0f},'.format,
-                "rad2":'{:4.0f},'.format,
-                "rad3":'{:4.0f},'.format,
-                "rad4":'{:4.0f},'.format,
-                "pouter":'{:4.0f},'.format,
-                "router":'{:4.0f},'.format,
-                "rmw":'{:3.0f},'.format,
-                "gusts":'{:3.0f},'.format,
-                "eye":'{:3.0f},'.format,
-                "subregion":'{:>2s},'.format,
-                "maxseas":'{:3.0f},'.format,
-                "initials":'{:>3s},'.format,
-                "dir":'{:3.0f},'.format,
-                "speed":'{:3.0f},'.format,
-                "stormname":'{:>9s},'.format,
-                "depth":'{:>1s},'.format,
-                "seas":'{:2.0f},'.format,
-                "seascode":'{:>3s},'.format,
-                "seas1":'{:4.0f},'.format,
-                "seas2":'{:4.0f},'.format,
-                "seas3":'{:4.0f},'.format,
-                "seas4":'{:4.0f},'.format,
-                "userdefined":'{:>18s},'.format,
-                "userdata":'{},'.format,
-                "cpsB":'{:4.0f},'.format,
-                "cpsll":'{:4.0f},'.format,
-                "cpsul":'{:4.0f},'.format,
-                "warmcore":'{},'.format,
-                "direction":'{},'.format,
-                }
-        junk = df.to_string(header=False, index=False, na_rep=' ', formatters=formatters, columns=atcfcolumns)
-
-
-
-        # TODO: FIX IDL-STYLE COLUMNS. STORMNAME IS MISSING A LETTER
-        
-        # na_rep=' ' has no effect
-        # strings have extra space in front of them
-        junk = junk.split('\n')
-        # replace first 3 occurrences of ',  ' with ', '.
-        # replace ',  XX,' with ', XX,'
-        # replace 'nan' with '   '
-        junk = [j.replace(',  ', ', ', 3).replace(',  XX,',', XX,').replace('nan','   ') for j in junk]
-        #delete space before windcode (e.g. NEQ)
-        junk = [j[:68]+j[69:] for j in junk]
-        #delete space before initials
-        junk = [j[:133]+j[134:] for j in junk]
-        #delete space before depth
-        junk = [j[:161]+j[162:] for j in junk]
-        #delete space before seascode
-        junk = [j[:168]+j[169:] for j in junk]
-        junk = '\n'.join(junk)
-    
     if debug:
         pdb.set_trace()
 
