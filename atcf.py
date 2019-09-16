@@ -29,14 +29,6 @@ ifile = '/glade/work/ahijevyc/work/atcf/Irma.ECMWF.dat'
 ifile = '/glade/scratch/mpasrt/uni/2018071700/latlon_0.500deg_0.25km/gfdl_tracker/tcgen/fort.64'
 
 
-
-# Standard ATCF columns (doesn't include track id, like in fort.66).
-# https://www.nrlmry.navy.mil/atcf_web/docs/database/new/abrdeck.html
-atcfcolumns=["basin","cy","initial_time","technum","model","fhr","lat","lon","vmax","minp","ty",
-    "rad", "windcode", "rad1", "rad2", "rad3", "rad4", "pouter", "router", "rmw", "gusts", "eye",
-    "subregion", "maxseas", "initials", "dir", "speed", "stormname", "depth", "seas", "seascode",
-    "seas1", "seas2", "seas3", "seas4", "userdefined", "userdata"]
-
 def cyclone_phase_space_columns():
     names = []
     names.append('cpsB') # Cyclone Phase Space "Parameter B" for thermal asymmetry. (Values are *10)
@@ -48,15 +40,26 @@ def cyclone_phase_space_columns():
 def getcy(cys):
     return cys[0:2]
 
-def read(ifile = ifile, debug=False, fullcircle=False):
+def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
     # Read data into Pandas Dataframe
     print('Reading', ifile, 'fullcircle=', fullcircle)
+
+    # Standard ATCF columns (doesn't include track id, like in fort.66).
+    # https://www.nrlmry.navy.mil/atcf_web/docs/database/new/abrdeck.html
+    # Updated format https://www.nrlmry.navy.mil/atcf_web/docs/database/new/abdeck.txt 
+    atcfcolumns=["basin","cy","initial_time","technum","model","fhr","lat","lon","vmax","minp","ty",
+        "rad", "windcode", "rad1", "rad2", "rad3", "rad4", "pouter", "router", "rmw", "gusts", "eye",
+        "subregion", "maxseas", "initials", "dir", "speed", "stormname", "depth", "seas", "seascode",
+        "seas1", "seas2", "seas3", "seas4", "userdefine1", "userdata1"]
+
+
+
     names = list(atcfcolumns) # make a copy of list, not a copy of the reference to the list.
     converters={
             # The problem with CY is ATCF only reserves 2 characters for it.
             "cy" : lambda x: x.strip(), # cy is not always an integer (e.g. 10E) # Why strip leading zeros?
             "initial_time" : lambda x: pd.to_datetime(x.strip(),format='%Y%m%d%H'),
-            "technum" : lambda x: x.strip(), #strip leading spaces but not leading zeros
+            "technum" : lambda x: x.strip(), #strip leading spaces but not leading zeros # Tried int, but choked on blank spaces
             "model" : lambda x: x.strip(), # Strip leading whitespace - for matching later.
             "vmax": float,
             "minp": float,
@@ -70,7 +73,7 @@ def read(ifile = ifile, debug=False, fullcircle=False):
             "pouter": float,
             "router": float,
             "subregion": lambda x: x[-2:],
-             # subregion ends up being 3 when written with .to_string
+             # subregion ends up being 3 characters when written with .to_string
              # strange subregion only needs one character, but official a-decks leave 3. 
             "initials" : lambda x: x[-3:],
             'stormname': lambda x: x[-9:],
@@ -80,8 +83,8 @@ def read(ifile = ifile, debug=False, fullcircle=False):
             "seas2": float,
             "seas3": float,
             "seas4": float,
-            "userdefined" : lambda x: x.strip(),
-            "userdata" : lambda x: x.strip(),
+            "userdefine1" : lambda x: x.strip(),
+            "userdata1" : lambda x: x.strip(), #TODO userdefine2-4 and userdata2-4
         }
     dtype={
             'rmw'      : np.float64,
@@ -157,7 +160,7 @@ def read(ifile = ifile, debug=False, fullcircle=False):
     if num_cols == 44 and 'min_warmcore_fract d' in testline[35]:
         if debug:
             print("Looks like IDL output")
-        names = [n.replace('userdata', 'min_warmcore_fract') for n in names]
+        names = [n.replace('userdata1', 'min_warmcore_fract') for n in names]
         names.append('dT500')
         names.append('dT200')
         names.append('ddZ850200')
@@ -173,7 +176,7 @@ def read(ifile = ifile, debug=False, fullcircle=False):
 
     usecols = list(range(len(names)))
 
-    # If you get a beyond index range (or something like that) error, see if userdata column is intermittent and has commas in it. 
+    # If you get a beyond index range (or something like that) error, see if userdata1 column is intermittent and has commas in it. 
     # If so, clean it up (i.e. truncate it)
 
     #atrack = ['basin','cy','initial_time','technum','model']
@@ -228,7 +231,7 @@ def read(ifile = ifile, debug=False, fullcircle=False):
                 df[col] = np.NaN
 
             # Strings are empty
-            if col in ['subregion','stormname','depth','userdefined','userdata']:
+            if col in ['subregion','stormname','depth','userdefine1','userdata1']:
                 df[col] = ''
 
             if col in ['initials', 'depth']:
@@ -246,12 +249,21 @@ def read(ifile = ifile, debug=False, fullcircle=False):
         df['rad4'] = 0
 
 
-    # Tried converting to MultiIndex DataFrame but it led to all sorts of problems.
-    # TODO: try append=True to avoid losing columns when you make them an index
+    if expandwindradii:
+        # Set append=True to avoid losing columns when you make them an index
+        df = df.set_index(['basin','cy','initial_time','model','fhr','rad'])
+        mi = pd.MultiIndex.from_product(df.index.levels,names=df.index.names) # create MultiIndex with no missing rads.
+        # TODO: Correctly use fill method option when applying reindex method.
+        #       For example, with method='pad', it wrongly propagates forward previous time's values 
+        #       for 0-knot line (because 0-knot line didn't exist). Tried method='nearest' but
+        #       NotImplementedError: method='nearest' not implemented yet for MultiIndex; see GitHub issue 9365.
+        df = df.reindex(mi) # now there is a 0,34,50, and 64-knot line for each entry.
+        df = df.reset_index()  # and all the indexes are moved back to columns
+        # Tried leaving as MultiIndex DataFrame but it led to all sorts of problems.
 
-    return df
+return df
 
-def x2s(x):
+def f2s(x):
     # Convert absolute value of float to integer number of tenths for ATCF lat/lon
     # called by lat2s and lon2s
     x *= 10
@@ -261,23 +273,27 @@ def x2s(x):
 
 def lat2s(lat):
     NS = 'N' if lat >= 0 else 'S'
-    lat = x2s(lat) + NS
+    lat = f2s(lat) + NS
     return lat
 
 def lon2s(lon):
     EW = 'E' if lon >= 0 else 'W'
-    lon = x2s(lon) + EW
+    lon = f2s(lon) + EW
     return lon
 
 # function to compute great circle distance between point lat1 and lon1 and arrays of points 
-# given by lons, lats
+# INPUT:
+#   lon1 - longitude of origin
+#   lat1 - latitude of origin
+#   lons - longitudes of points to get distance to
+#   lats - lattudes of points to get distance to
 # Returns 2 things:
 #   1) distance in km
 #   2) initial bearing from 1st pt to 2nd pt.
-def dist_bearing(lon1,lons,lat1,lats):
+def dist_bearing(lon1,lat1,lons,lats):
     lon1 = np.radians(lon1)
-    lons = np.radians(lons)
     lat1 = np.radians(lat1)
+    lons = np.radians(lons)
     lats = np.radians(lats)
     # great circle distance. 
     arg = np.sin(lat1)*np.sin(lats)+np.cos(lat1)*np.cos(lats)*np.cos(lon1-lons)
@@ -322,11 +338,12 @@ def get_ext_of_wind(speed_kts, distance_km, bearing, raw_vmax_kts, quads=quads, 
     
     # speed_kts is converted to masked array. Masked where distance >= 300 nm
     rad_nm = {"wind_radii_method":wind_radii_method}
-    # Put in dictionary "rad_nm" where rad_nm = {
-    #                                       34: {'NE':rad1, 'SE':rad2, 'SW':rad3, 'NW':rad4},
-    #                                       50: {'NE':rad1, 'SE':rad2, 'SW':rad3, 'NW':rad4},
-    #                                       64: {'NE':rad1, 'SE':rad2, 'SW':rad3, 'NW':rad4} 
-    #                                     }
+    # Put in dictionary "rad_nm" where
+    # rad_nm = {
+    #           34: {'NE':rad1, 'SE':rad2, 'SW':rad3, 'NW':rad4},
+    #           50: {'NE':rad1, 'SE':rad2, 'SW':rad3, 'NW':rad4},
+    #           64: {'NE':rad1, 'SE':rad2, 'SW':rad3, 'NW':rad4} 
+    #          }
 
     rad_search_radius_km = rad_search_radius_nm / km2nm
 
@@ -405,7 +422,7 @@ def derived_winds(u10, v10, mslp, lonCell, latCell, row, vmax_search_radius=250.
     # Given a row (with row.lon and row.lat)...
 
     # Derive cell distances and bearings
-    distance_km, bearing = dist_bearing(row.lon, lonCell, row.lat, latCell)
+    distance_km, bearing = dist_bearing(row.lon, row.lat, lonCell, latCell)
 
     # Derive 10m wind speed and Vt from u10 and v10
     speed_kts = np.sqrt(u10**2 + v10**2) * ms2kts
@@ -503,14 +520,14 @@ def update_df(df, row, raw_vmax_kts, raw_RMW_nm, raw_minp, rad_nm, gridfile=None
     row["minp"] = raw_minp
     row["rmw"]  = raw_RMW_nm
     # Add note of original mesh = True in user data (not defined) column
-    if 'origmeshTrue' not in row.userdata:
-        moreuserdata = 'origmeshTrue wind_radii_method '+ rad_nm["wind_radii_method"]
+    if 'origmeshTrue' not in row.userdata1:
+        moreuserdata1 = 'origmeshTrue wind_radii_method '+ rad_nm["wind_radii_method"]
         if gridfile is not None:
-            # Append origmesh file to userdata column (after a comma)
-            moreuserdata += ', ' + gridfile
+            # Append origmesh file to userdata1 column (after a comma)
+            moreuserdata1 += ', ' + gridfile
         if debug:
-            print("appending "+moreuserdata+" to row.userdata")
-        row.userdata += moreuserdata
+            print("appending "+moreuserdata1+" to row.userdata1")
+        row.userdata1 += moreuserdata1
     if debug:
         print('after', row[['vmax', 'minp', 'rmw']]) 
 
@@ -552,7 +569,7 @@ def write(ofile, df, fullcircle=False, debug=False):
         atcf_lines += "{:2s}, ".format(row.basin) 
         atcf_lines += "{:2s}, ".format(row.cy.zfill(2))
         atcf_lines += "{:8s}, ".format(row.initial_time.strftime('%Y%m%d%H'))
-        atcf_lines += "{}, ".format(row.technum) 
+        atcf_lines += "{:2s}, ".format(row.technum) 
         atcf_lines += "{}, ".format(row.model)
         atcf_lines += "{:3.0f}, ".format(row.fhr)
         atcf_lines += "{:>4s}, ".format(lat2s(row.lat))
@@ -584,8 +601,8 @@ def write(ofile, df, fullcircle=False, debug=False):
         atcf_lines += "{:4.0f}, ".format(row.seas2)
         atcf_lines += "{:4.0f}, ".format(row.seas3)
         atcf_lines += "{:4.0f}, ".format(row.seas4)
-        atcf_lines += "{:>20s}, ".format(row.userdefined) # Described as 20 chars in atcf doc. 
-        atcf_lines += "{}, ".format(row.userdata)
+        atcf_lines += "{:s}, ".format(row.userdefine1) # Described as 1-20 chars in atcf doc. 
+        atcf_lines += "{:s}, ".format(row.userdata1) # described as 1-100 chars in atcf doc
         atcf_lines += "\n"
 
     atcf_lines = atcf_lines.replace("nan","   ")
