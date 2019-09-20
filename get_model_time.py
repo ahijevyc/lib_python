@@ -32,7 +32,11 @@ def valid(ncfilename, diagnostic_name):
         valid_time = initialization_time + forecast_lead_time
     elif 'valid_time' in x.ncattrs():
         valid_time = datetime.datetime.strptime(x.valid_time, '%Y%m%d_%H%M%S')
-        initialization_time = datetime.datetime.strptime(x.init_time, '%Y%m%d_%H%M%S')
+        if 'init_time' in x.ncattrs():
+            initialization_time = datetime.datetime.strptime(x.init_time, '%Y%m%d_%H%M%S')
+        else:
+            print("Found valid_time. Expected init_time attribute too, but found none. Oh well.")
+            initialization_time = None
     elif 'START_DATE' in global_atts:
         # Like ds300 NCAR WRF ensemble diags files
         initialization_time = datetime.datetime.strptime(nc.START_DATE, '%Y-%m-%d_%H:%M:%S')
@@ -55,7 +59,10 @@ def valid(ncfilename, diagnostic_name):
     nc.close()
 
     # return time_zone_aware datetimes
-    return pytz.utc.localize(valid_time), pytz.utc.localize(initialization_time)
+    if initialization_time is not None: # hack for when init_time does not exist (like in accumulated obervations)
+        return pytz.utc.localize(valid_time), pytz.utc.localize(initialization_time)
+    else:
+        return pytz.utc.localize(valid_time), None
 
 def init(ncfilename, diagnostic_name):
     valid_time, init_time = valid(ncfilename, diagnostic_name)
