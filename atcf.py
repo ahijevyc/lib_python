@@ -42,7 +42,7 @@ def getcy(cys):
 
 def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
     # Read data into Pandas Dataframe
-    print('Reading', ifile, 'fullcircle=', fullcircle)
+    print('Reading', ifile, 'fullcircle=', fullcircle, 'expandwindradii=', expandwindradii)
 
     # Standard ATCF columns (doesn't include track id, like in fort.66).
     # https://www.nrlmry.navy.mil/atcf_web/docs/database/new/abrdeck.html
@@ -50,21 +50,21 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
     atcfcolumns=["basin","cy","initial_time","technum","model","fhr","lat","lon","vmax","minp","ty",
         "rad", "windcode", "rad1", "rad2", "rad3", "rad4", "pouter", "router", "rmw", "gusts", "eye",
         "subregion", "maxseas", "initials", "dir", "speed", "stormname", "depth", "seas", "seascode",
-        "seas1", "seas2", "seas3", "seas4", "userdefine1", "userdata1"]
+        "seas1", "seas2", "seas3", "seas4", "userdefine1", "userdata1", "userdefine2", "userdata2",
+        "userdefine3", "userdata3", "userdefine4", "userdata4"]
 
 
 
     names = list(atcfcolumns) # make a copy of list, not a copy of the reference to the list.
     converters={
             # The problem with CY is ATCF only reserves 2 characters for it.
-            "cy" : lambda x: x.strip(), # cy is not always an integer (e.g. 10E) # Why strip leading zeros?
+            "cy" : lambda x: x.strip(), # cy is not always an integer (e.g. 10E) 
             "initial_time" : lambda x: pd.to_datetime(x.strip(),format='%Y%m%d%H'),
-            "technum" : lambda x: x.strip(), #strip leading spaces but not leading zeros # Tried int, but choked on blank spaces
-            "model" : lambda x: x.strip(), # Strip leading whitespace - for matching later.
+            "technum" : str, #Don't want to strip leading zeros of interpolate 
             "vmax": float,
             "minp": float,
             "minp": float,
-            "ty" : lambda x: x.strip(),
+            "rad" : lambda x: x.strip(), # not a continuous value; it is a category. Important for interpolating in time.
             "windcode" : lambda x: x[-3:],
             "rad1": float,
             "rad2": float,
@@ -83,8 +83,14 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
             "seas2": float,
             "seas3": float,
             "seas4": float,
-            "userdefine1" : lambda x: x.strip(),
-            "userdata1" : lambda x: x.strip(), #TODO userdefine2-4 and userdata2-4
+            "userdefine1": str,
+            "userdata1": str,
+            "userdefine2": str,
+            "userdata2": str,
+            "userdefine3": str,
+            "userdata3": str,
+            "userdefine4": str,
+            "userdata4": str,
         }
     dtype={
             'rmw'      : np.float64,
@@ -116,6 +122,14 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
         print("test line num_cols:", num_cols)
         print(testline)
     del reader
+    with open(ifile) as f:
+        max_num_cols = max(len(line.split(',')) for line in f)
+    if max_num_cols != num_cols:
+        print("test line has", num_cols, "columns, but another line has ", max_num_cols, "columns.")
+        # It's hard to deal with userdefined columns and data in a file with multiple types of models.
+        print("atcf.read() may not handle different numbers of columns.")
+        #print("Exiting.")
+        #sys.exit(2)
 
     # Output from HWRF vortex tracker, fort.64 and fort.66
     # are mostly ATCF format but have subset of columns
@@ -141,7 +155,7 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
         print('Assuming fort.66-style with 31 columns in', ifile)
         # There is a cyclogenesis ID column for fort.66
         if debug:
-            print('inserted ID for cyclogenesis in column 2')
+            print('inserted ID for cyclogenesis in column 2 (zero-based)')
         names.insert(2, 'id') # ID for the cyclogenesis
         print('Using 1st 21 elements of names list')
         names = names[0:21]
@@ -158,8 +172,7 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
 
     # TODO read IDL output
     if num_cols == 44 and 'min_warmcore_fract d' in testline[35]:
-        if debug:
-            print("Looks like IDL output")
+        print("Looks like IDL output")
         names = [n.replace('userdata1', 'min_warmcore_fract') for n in names]
         names.append('dT500')
         names.append('dT200')
@@ -174,6 +187,8 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
             print("even though file doesn't end in .dat", ifile)
         names = names[0:11]
 
+    if len(names) > max_num_cols:
+        names = names[0:max_num_cols]
     usecols = list(range(len(names)))
 
     # If you get a beyond index range (or something like that) error, see if userdata1 column is intermittent and has commas in it. 
@@ -190,7 +205,7 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
         print("converters=",converters)
         print("dype=", dtype)
     df = pd.read_csv(ifile,index_col=None,header=None, delimiter=",", usecols=usecols, names=names, 
-            converters=converters, na_values=na_values, dtype=dtype) 
+            converters=converters, na_values=na_values, dtype=dtype, skipinitialspace=True, engine='c') # engine='c' is faster than engine="python"
     # fort.64 has asterisks sometimes. Problem with hwrf_tracker. 
     badlines = df['lon'].str.contains("\*")
     if any(badlines):
@@ -241,7 +256,6 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
         if debug:
             print("full circle wind radii")
         # Full circle wind radii instead of quadrants
-        # TODO better way than this hack
         df['windcode'] = 'AAA'
         df['rad1'] = df[['rad1','rad2','rad3','rad4']].max(axis=1)
         df['rad2'] = 0
@@ -252,6 +266,7 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
     if expandwindradii:
         # Set append=True to avoid losing columns when you make them an index
         df = df.set_index(['basin','cy','initial_time','model','fhr','rad'])
+        df.index.set_levels(['0','34','50','64'], inplace=True, level='rad') # make sure full set of thresholds is defined. original dataframe may not have them all.
         mi = pd.MultiIndex.from_product(df.index.levels,names=df.index.names) # create MultiIndex with no missing rads.
         # TODO: Correctly use fill method option when applying reindex method.
         #       For example, with method='pad', it wrongly propagates forward previous time's values 
@@ -261,7 +276,7 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
         df = df.reset_index()  # and all the indexes are moved back to columns
         # Tried leaving as MultiIndex DataFrame but it led to all sorts of problems.
 
-return df
+    return df
 
 def f2s(x):
     # Convert absolute value of float to integer number of tenths for ATCF lat/lon
@@ -291,6 +306,10 @@ def lon2s(lon):
 #   1) distance in km
 #   2) initial bearing from 1st pt to 2nd pt.
 def dist_bearing(lon1,lat1,lons,lats):
+    assert lat1 < 90, "lat1 > 90"
+    assert lat1 > -90, "lat1 < -90"
+    assert lats.max() < 90, "lats element > 90"
+    assert lats.min() > -90, "lats element < -90"
     lon1 = np.radians(lon1)
     lat1 = np.radians(lat1)
     lons = np.radians(lons)
@@ -577,7 +596,7 @@ def write(ofile, df, fullcircle=False, debug=False):
         atcf_lines += "{:3.0f}, ".format(row.vmax)
         atcf_lines += "{:4.0f}, ".format(row.minp)
         atcf_lines += "{}, ".format(row.ty)
-        atcf_lines += "{:3.0f}, ".format(row.rad)
+        atcf_lines += "{:>3s}, ".format(row.rad)
         atcf_lines += "{:>3s}, ".format(row.windcode)
         atcf_lines += "{:4.0f}, ".format(row.rad1)
         atcf_lines += "{:4.0f}, ".format(row.rad2)
