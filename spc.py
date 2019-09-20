@@ -6,9 +6,13 @@ import pdb
 import numpy as np
 import datetime
 import os # for basename
+import matplotlib.pyplot as plt
 import matplotlib.path as mpath
 import cartopy
+from metpy.units import units
 import sqlite3
+from scipy import spatial
+import scipy.ndimage as ndimage
 
 def spc_event_filename(event_type):
     name = '/glade/work/ahijevyc/share/SPC/'+event_type+'/'
@@ -172,7 +176,8 @@ def get_storm_reports(
 
         # Sanity Check:
         # Verify I get the same thing as Ryan Sobash's sqlite3 database
-        conn = sqlite3.connect("/glade/u/home/sobash/2013RT/REPORTS/reports_all.db")
+        sobash_db = "/glade/u/home/sobash/2013RT/REPORTS/reports_all.db"
+        conn = sqlite3.connect(sobash_db)
         sqltable = "reports_" + event_type
         # Could apply a datetime range here (WHERE datetime BETWEEN yyyy/mm/dd hh:mm:ss and blah), but converting from UTC to CST is tricky.
         sqlcommand = "SELECT * FROM "+sqltable
@@ -186,24 +191,31 @@ def get_storm_reports(
 
         # See if they have the same number of rows
         if len(sql_df) != len(rpts):
-            print("My data don't match Ryan's SQL database")
-            pdb.set_trace()
-            sys.exit(1)
-        # See if they have the same times
-        if (sql_df["datetime"].values != rpts["time"].values).any():
-            print("My data times don't match Ryan's SQL database")
-        # See if they have the same locations
-        same_columns = ["slat", "slon", "elat", "elon"]
-        if (sql_df[same_columns].values != rpts[same_columns].values).any():
-            print("My data locations don't match Ryan's SQL database")
-            max_abs_difference = np.max(np.abs(sql_df[same_columns]-rpts[same_columns]))
-            print("max abs difference")
-            print(max_abs_difference)
-            if all(max_abs_difference < 0.000001):
-                print("who cares about such a small difference?")
-            else:
+            print("I have",len(rpts),"reports, but Ryan's SQL database has",len(sql_df),".")
+            epoch1 = os.path.getmtime(rpts_file)
+            epoch2 = os.path.getmtime(sobash_db)
+            if epoch2 > epoch1:
+                print("Ryan's database may be modified more recently but it may have duplicate reports.")
+            if debug:
+                print("Mod date of my reports file:     ", datetime.datetime.fromtimestamp(epoch1).strftime('%c'))
+                print("Mod date of Ryan's SQL database: ", datetime.datetime.fromtimestamp(epoch2).strftime('%c'))
                 pdb.set_trace()
-                sys.exit(1)
+        else:
+            # See if they have the same times (must have same number of lines to test like this)
+            if (sql_df["datetime"].values != rpts["time"].values).any():
+                print("My data times don't match Ryan's SQL database")
+            # See if they have the same locations
+            same_columns = ["slat", "slon", "elat", "elon"]
+            if (sql_df[same_columns].values != rpts[same_columns].values).any():
+                print("My data locations don't match Ryan's SQL database")
+                max_abs_difference = np.max(np.abs(sql_df[same_columns]-rpts[same_columns]))
+                print("max abs difference")
+                print(max_abs_difference)
+                if all(max_abs_difference < 0.000001):
+                    print("who cares about such a small difference?")
+                else:
+                    pdb.set_trace()
+                    sys.exit(1)
         if debug:
             print("From Ryan's SQL database")
             print(sqlcommand)
@@ -214,23 +226,88 @@ def get_storm_reports(
 
     return all_rpts
 
-def plot(storm_reports, ax, scale=1, drawradius=0, alpha=0.4, debug=False):
+def symbol_dict(scale=1):
+    # Color, size, marker, and label of wind, hail, and tornado storm reports
+    return {
+            "wind":       {"c" : 'blue',  "s": 8*scale, "marker":"s", "label":"Wind"},
+            "high wind":  {"c" : 'black', "s":12*scale, "marker":"s", "label":"Wind/HI"},
+            "hail":       {"c" : 'green', "s":12*scale, "marker":"^", "label":"Hail"},
+            "large hail": {"c" : 'black', "s":16*scale, "marker":"^", "label":"Hail/LG"},
+            "torn":       {"c" : 'red',   "s":12*scale, "marker":"v", "label":"Torn"}
+            }
+
+
+def plotgridded(storm_reports, ax, gridlat2D=None, gridlon2D=None, scale=1, sigma=1, alpha=0.5, event_types=["wind", "high wind", "hail", "large hail", "torn"], 
+        debug=False):
+
+
+    # Default dx and dy of 81.2705km came from https://www.nco.ncep.noaa.gov/pmb/docs/on388/tableb.html#GRID211
+    if storm_reports.empty:
+        # is this the right thing to return? what about empty list []? or rpts?
+        if debug:
+            print("spc.plotgridded(): storm reports DataFrame is empty. Returning")
+        return
+
+    storm_rpts_gridded = {}
+
+    for event_type in event_types:
+        if debug:
+            print("looking for "+event_type)
+        # include high wind in wind and large hail in hail
+        if event_type == "wind":
+            xrpts = storm_reports[(storm_reports.event_type == "wind") | (storm_reports.event_type == "high wind")]
+        elif event_type == "hail":
+            xrpts = storm_reports[(storm_reports.event_type == "hail") | (storm_reports.event_type == "large hail")]
+        else:
+            xrpts = storm_reports[storm_reports.event_type == event_type]
+        print("plot",len(xrpts),event_type,"reports")
+        # Used to skip to next iteration if there were zero reports, but you want grid even if it is all zeros.
+        obslons, obslats = xrpts.slon.values, xrpts.slat.values
+
+        grid_points = list(zip(gridlon2D.ravel(),gridlat2D.ravel()))# tried using zip but in python 3 this returns a 0-dimensional zip object, not 2 elements
+        tree = spatial.KDTree(grid_points) 
+
+        data_gridded = np.zeros_like(gridlon2D).flatten()
+        if len(obslons) > 0:
+            dist, indices = tree.query(list(zip(obslons,obslats)))
+            data_gridded[indices] = 1
+
+        data_gridded = data_gridded.reshape(gridlon2D.shape)
+
+        if sigma > 0:
+            if debug:
+                print("about to run Gaussian smoother")
+                pdb.set_trace()
+            # I'm uncomfortable doing this in map space but it is fast
+            data_gridded = ndimage.gaussian_filter(data_gridded, sigma=sigma)
+
+        storm_rpts_gridded[event_type] = data_gridded
+
+        if False:
+            # TODO: fix extent so it is plotted correctly
+            color = symbol_dict()[event_type]["c"]
+            # get the color of the symbol, tack on an "s" and use that as the color map name.
+            if color=="black": # there is no "blacks" colortable
+                color="grey"
+            color = color.capitalize()
+            # add gridded storm events array to dictionary
+
+            img = ax.imshow(np.ma.masked_less(data_gridded,0.001), extent=(gridlon2D.min(),gridlon2D.max(),gridlat2D.min(),gridlat2D.max()),
+                    transform=cartopy.crs.PlateCarree(), cmap=plt.get_cmap(color+"s"), label=event_type, alpha=0.85)
+
+    return storm_rpts_gridded
+
+
+def plot(storm_reports, ax, scale=1, drawradius=0, alpha=0.5, debug=False):
 
     if storm_reports.empty:
         # is this the right thing to return? what about empty list []? or rpts?
         if debug:
             print("spc.plot(): storm reports DataFrame is empty. Returning")
-        return
+        return None
 
     # Color, size, marker, and label of wind, hail, and tornado storm reports
-    kwdict = {
-            "wind":       {"c" : 'blue',  "s": 8*scale, "marker":"s", "label":"Wind Report"},
-            "high wind":  {"c" : 'black', "s":12*scale, "marker":"s", "label":"Wind Report/HI"},
-            "hail":       {"c" : 'green', "s":12*scale, "marker":"^", "label":"Hail Report"},
-            "large hail": {"c" : 'black', "s":16*scale, "marker":"^", "label":"Hail Report/LG"},
-            "torn":       {"c" : 'red',   "s":12*scale, "marker":"v", "label":"Torn Report"}
-            }
-
+    kwdict = symbol_dict(scale=scale)
     storm_rpts_plots = []
 
     for event_type in ["wind", "high wind", "hail", "large hail", "torn"]:
@@ -238,21 +315,23 @@ def plot(storm_reports, ax, scale=1, drawradius=0, alpha=0.4, debug=False):
             print("looking for "+event_type)
         xrpts = storm_reports[storm_reports.event_type == event_type]
         print("plot",len(xrpts),event_type,"reports")
+        kwdict[event_type]["label"] += " (%d)" % len(xrpts)
         if len(xrpts) == 0:
             continue
         lons, lats = xrpts.slon.values, xrpts.slat.values
         storm_rpts_plot = ax.scatter(lons, lats, alpha = alpha, edgecolors="None", **kwdict[event_type],
                 transform=cartopy.crs.Geodetic())
         storm_rpts_plots.append(storm_rpts_plot)
-        if debug:
-            pdb.set_trace()
         if drawradius > 0:
+            if debug:
+                print("about to draw tissot circles for "+event_type)
+                pdb.set_trace()
             # With lons and lats, specifying more than one dimension allows individual points to be drawn. 
             # Otherwise a grid of circles will be drawn.
             # It warns about using PlateCarree to approximate Geodetic. It still warps the circles
             # appropriately, so I think this is okay.
-            within_radius = ax.tissot(rad_km = drawradius, lons=lons[np.newaxis], lats=lats[np.newaxis], 
-                facecolor=kwdict[event_type]["c"], alpha=0.4, label=str(drawradius)+" km radius")
+            within_radius = ax.tissot(rad_km = drawradius.to("km").magnitude, lons=lons[np.newaxis], lats=lats[np.newaxis], 
+                facecolor=kwdict[event_type]["c"], alpha=0.4, label=str(drawradius)+" radius")
             # TODO: Legend does not support tissot cartopy.mpl.feature_artist.
             # A proxy artist may be used instead.
             # matplotlib.org/users/legend_guide.html#
