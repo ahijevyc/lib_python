@@ -142,6 +142,14 @@ fieldinfo = {
   'shr06'        :{ 'fname'  : ['uzonal_6km','umeridional_6km','uzonal_surface','umeridional_surface'], 'filename': 'diag', 'skip':50 },
   'shr01'        :{ 'fname'  : ['uzonal_1km','umeridional_1km','uzonal_surface','umeridional_surface'], 'filename': 'diag', 'skip':50 },
 }
+
+# Another fieldinfo dictionary for nsc files. 
+nsc = fieldinfo
+nsc['crefuh']['fname'] = ['REFL_COM', 'UP_HELI_MAX']
+nsc['mucape']['fname'] = ['MUCAPE']
+nsc['t2']['fname'] = ['T2']
+
+
 # Enter wind barb info for list of pressure levels
 for plev in ['200', '250', '300', '500', '700', '850', '925']:
     fieldinfo['wind'+plev] = { 'fname' : ['uzonal_'+plev+'hPa', 'umeridional_'+plev+'hPa'], 'filename':'diag', 'skip':50}
