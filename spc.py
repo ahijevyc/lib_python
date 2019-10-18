@@ -21,7 +21,15 @@ def spc_event_filename(event_type):
     name = name + "1955-2017_"+event_type+".csv"
     return name
 
-
+def fix_severe_wx_report_variable_names(stat):
+    # Replace unhelpful substrings in forecast variable name.
+    stat.replace({'FCST_VAR':r'^PRES'}, {'FCST_VAR' : "HAIL"}, regex=True, inplace=True)
+    stat.replace({'FCST_VAR':r'^PTEND'}, {'FCST_VAR' : "TORN"}, regex=True, inplace=True)
+    stat.replace({'FCST_VAR':r'_ge0\.01905'}, {'FCST_VAR' : '>=0.75"'}, regex=True, inplace=True)
+    stat.replace({'FCST_VAR':r'_ge0\.0254'}, {'FCST_VAR' : '>=1"'}, regex=True, inplace=True)
+    stat.replace({'FCST_VAR':r'_ge0\.03175'}, {'FCST_VAR' : '>=1.25"'}, regex=True, inplace=True)
+    stat.replace({'FCST_VAR':r'_ge0\.0381'}, {'FCST_VAR' : '>=1.5"'}, regex=True, inplace=True)
+    return stat
 
 def get_storm_reports( 
         start = datetime.datetime(2016,6,10,0,0,0,0,pytz.UTC), 
