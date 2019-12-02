@@ -24,24 +24,24 @@ def find_side(ls, side):
     return sgeom.LineString(points[side])
 
 
-def lambert_xticks(ax, ticks):
+def lambert_xticks(ax, ticks, **kwdict):
     """Draw ticks on the bottom x-axis of a Lambert Conformal projection."""
     te = lambda xy: xy[0]
     lc = lambda t, n, b: np.vstack((np.zeros(n) + t, np.linspace(b[2], b[3], n))).T
     xticks, xticklabels = _lambert_ticks(ax, ticks, 'bottom', lc, te)
     ax.xaxis.tick_bottom()
     ax.set_xticks(xticks)
-    ax.set_xticklabels([ax.xaxis.get_major_formatter()(xtick) for xtick in xticklabels])
+    ax.set_xticklabels([ax.xaxis.get_major_formatter()(xtick) for xtick in xticklabels], fontdict=kwdict)
     
 
-def lambert_yticks(ax, ticks):
-    """Draw ricks on the left y-axis of a Lamber Conformal projection."""
+def lambert_yticks(ax, ticks, **kwdict):
+    """Draw ticks on the left y-axis of a Lambert Conformal projection."""
     te = lambda xy: xy[1]
     lc = lambda t, n, b: np.vstack((np.linspace(b[0], b[1], n), np.zeros(n) + t)).T
     yticks, yticklabels = _lambert_ticks(ax, ticks, 'left', lc, te)
     ax.yaxis.tick_left()
     ax.set_yticks(yticks)
-    ax.set_yticklabels([ax.yaxis.get_major_formatter()(ytick) for ytick in yticklabels])
+    ax.set_yticklabels([ax.yaxis.get_major_formatter()(ytick) for ytick in yticklabels], fontdict=kwdict)
 
 def _lambert_ticks(ax, ticks, tick_location, line_constructor, tick_extractor):
     """Get the tick locations and labels for an axis of a Lambert Conformal projection."""
@@ -92,9 +92,9 @@ def box(box, alpha=0.3):
 
 # Update latitude and longitude grid line labels based on extent
 # Show those within extent; hide those outside extent
-def update_label_visibility(gl, extent, debug=False):
+def update_label_visibility(gl, debug=False):
     # gl is gridliner object
-    west, east, south, north = extent
+    west, east, south, north = gl.axes.get_extent()
     if debug:
         print("extent=",extent)
     for label in gl.ylabel_artists:
