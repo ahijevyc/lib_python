@@ -460,7 +460,8 @@ def get_ext_of_wind(speed_kts, distance_km, bearing, raw_vmax_kts, quads=quads, 
     # Originally had distance_km < 800, but Chris D. suggested 300nm in Sep 2018 email
     # This was to deal with Irma and the unrelated 34 knot onshore flow in Georgia
     # Looking at HURDAT2 R34 sizes (since 2004), ex-tropical storm Karen 2015 had 710nm.
-    # Removing EX storms, the max was 480 nm in Hurricane Sandy 2012
+    # Removing EX-tropical storms, the max was 480 nm in Hurricane Sandy 2012
+    # see /glade/work/ahijevyc/atcf/R34noEX.png and R34withEX.png
     speed_kts = np.ma.array(speed_kts, mask = distance_km >= rad_search_radius_km)
 
     for wind_thresh_kts in thresh_kts[thresh_kts < raw_vmax_kts]:
