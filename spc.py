@@ -251,10 +251,8 @@ def plotgridded(storm_reports, ax, gridlat2D=None, gridlon2D=None, scale=1, sigm
 
     # Default dx and dy of 81.2705km came from https://www.nco.ncep.noaa.gov/pmb/docs/on388/tableb.html#GRID211
     if storm_reports.empty:
-        # is this the right thing to return? what about empty list []? or rpts?
         if debug:
-            print("spc.plotgridded(): storm reports DataFrame is empty. Returning")
-        return
+            print("spc.plotgridded(): storm reports DataFrame is empty. data_gridded will be all zeros.")
 
     storm_rpts_gridded = {}
 
