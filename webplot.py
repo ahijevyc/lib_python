@@ -8,10 +8,12 @@ import scipy.ndimage as ndimage
 from scipy import interpolate
 from scipy.spatial import qhull
 import subprocess
-import mpas, mpas_vort_cell
+import mpas_vort_cell
 import re
 import pdb
 from fieldinfo import *
+print("Hacking MPAS. remove 'import mpas' to do some other model")
+import mpas # hack to do mpas
 # To use MFDataset, first convert netcdf4 to netcdf4-classic with nccopy
 # for example, nccopy -d nc7 /glade/p/nsc/nmmm0046/schwartz/MPAS_ens_15-3km_mesh/POST/2017050100/ens_1/diag_latlon_g193.2017-05-02_00.00.00.nc /glade/scratch/ahijevyc/hwt2017/2017050100/ens_1/diag_latlon_g193.2017-05-02_00.00.00.nc
 from netCDF4 import Dataset, MFDataset
@@ -83,7 +85,7 @@ class webPlot:
     def readEnsemble(self):
         if hasattr(self, 'data') and hasattr(self, 'missing_members') and 'must_reread_ensemble' not in self.data: 
             return
-        self.data, self.missing_members = readEnsemble(self.initdate, self.domain, timerange=[self.shr,self.ehr], fields=self.opts, debug=self.debug, ENS_SIZE=self.ENS_SIZE)
+        self.data, self.missing_members = readEnsemble(self.initdate, self.domain, timerange=[self.shr,self.ehr], fields=self.opts, debug=self.debug, ENS_SIZE=self.ENS_SIZE, mesh=self.mesh)
 
     def plotDepartures(self):
         from collections import OrderedDict
@@ -328,7 +330,6 @@ class webPlot:
             min, max = self.data['fill'][0].min(), self.data['fill'][0].max()
             levels = np.linspace(min, max, num=10)
             cmap = colors.ListedColormap(self.opts['fill']['colors'])
-            norm = colors.BoundaryNorm(levels, cmap.N)
             tick_labels = levels[:-1]
         else:
             levels = self.opts['fill']['levels']
@@ -340,7 +341,7 @@ class webPlot:
                 cmap.set_over(self.opts['fill']['colors'][-1])
                 extend, extendfrac = 'max', 0.02
                 tick_labels = levels
-            norm = colors.BoundaryNorm(levels, cmap.N)
+        norm = colors.BoundaryNorm(levels, cmap.N)
 
         data = self.data['fill'][0]
         # regrid 1D mesh that needs to be smoothed
@@ -671,7 +672,7 @@ def parseargs():
     parser.add_argument('-bs', '--barbskip', help='barb skip interval')
     parser.add_argument('-t', '--title', help='title for plot')
     parser.add_argument('-dom', '--domain', default='CONUS', help='domain to plot')
-    parser.add_argument('-m', '--mesh', default='rt2015', choices=['rt2015','hrrr'], help='mesh')
+    parser.add_argument('-m', '--mesh', default='rt2015', choices=['mpas','rt2015','hrrr'], help='mesh')
     parser.add_argument('-al', '--autolevels', action='store_true', help='use min/max to determine levels for plot')
     parser.add_argument('-con', '--convert', default=True, action='store_false', help='run final image through imagemagick')
     parser.add_argument('-i', '--interp', default=False, action='store_true', help='plot interpolated station values')
@@ -864,7 +865,9 @@ def makeEnsembleListMPAS(wrfinit, timerange, ENS_SIZE, g193=False, debug=False):
                 diag   = '/glade/p/nsc/nmmm0046/schwartz/MPAS_ens_15-3km_mesh/POST/%s/ens_%d/diag_latlon_g193.%s.nc'%(yyyymmddhh,mem,wrfvalidstr)
             if debug: print(diag)
             if os.path.exists(diag): file_list['diag'].append(diag)
-            else: missing_list['diag'].append(missing_index)
+            else: 
+                missing_list['diag'].append(missing_index)
+                print(diag + " not exist")
             missing_index += 1
     if not file_list['diag']:
         print('Empty file_list')
@@ -936,7 +939,7 @@ def makeEnsembleListDA(wrfinit, timerange):
                 missing_index += 1
     return (file_list, missing_list)
 
-def readEnsemble(wrfinit, domain, timerange=None, fields=None, debug=False, ENS_SIZE=10):
+def readEnsemble(wrfinit, domain, timerange=None, fields=None, debug=False, ENS_SIZE=10, mesh=None):
     ''' Reads in desired fields and returns 2-D arrays of data for each field (barb/contour/field) '''
     if debug: 
         print(fields)
@@ -945,12 +948,13 @@ def readEnsemble(wrfinit, domain, timerange=None, fields=None, debug=False, ENS_
     #file_list, missing_list = makeEnsembleList(wrfinit, timerange, ENS_SIZE) #construct list of files
     #file_list, missing_list = makeEnsembleListNSC(wrfinit, timerange) #construct list of files
     #file_list, missing_list = makeEnsembleListStan(wrfinit, timerange, ENS_SIZE) #construct list of files
-    #file_list, missing_list = makeEnsembleListMPAS(wrfinit, timerange, ENS_SIZE, g193=False, debug=debug) #construct list of files
+    if mesh == 'mpas':
+        file_list, missing_list = makeEnsembleListMPAS(wrfinit, timerange, ENS_SIZE, g193=False, debug=debug) #construct list of files
     #file_list, missing_list = makeEnsembleListArchive(wrfinit, timerange) #construct list of files
     #file_list, missing_list = makeEnsembleListHybrid(wrfinit, timerange) #construct list of files
     #file_list, missing_list = makeEnsembleListHREF(wrfinit, timerange, ENS_SIZE) #construct list of files
-    file_list, missing_list = makeEnsembleListHRRR(wrfinit, timerange, 1) #construct list of files
- 
+    #file_list, missing_list = makeEnsembleListHRRR(wrfinit, timerange, 1) #construct list of files
+
     # loop through fill field, contour field, barb field and retrieve required data
     for f in ['fill', 'contour', 'barb']:
         if not list(fields[f].keys()): continue
@@ -966,6 +970,7 @@ def readEnsemble(wrfinit, domain, timerange=None, fields=None, debug=False, ENS_
         
         # open Multi-file netcdf dataset
         if debug:
+            print("opening xarray mfdataset "+ ' '.join(file_list[filename]))
             log("opening xarray mfdataset "+ ' '.join(file_list[filename]))
 
         fh = xarray.open_mfdataset(file_list[filename],concat_dim='Time')
