@@ -12,8 +12,8 @@ import mpas_vort_cell
 import re
 import pdb
 from fieldinfo import *
-print("Hacking MPAS. remove 'import mpas' to do some other model")
-import mpas # hack to do mpas
+print("importing mpas module. remove 'import mpas' to do some other model")
+from mpas import fieldinfo, makeEnsembleListMPAS
 # To use MFDataset, first convert netcdf4 to netcdf4-classic with nccopy
 # for example, nccopy -d nc7 /glade/p/nsc/nmmm0046/schwartz/MPAS_ens_15-3km_mesh/POST/2017050100/ens_1/diag_latlon_g193.2017-05-02_00.00.00.nc /glade/scratch/ahijevyc/hwt2017/2017050100/ens_1/diag_latlon_g193.2017-05-02_00.00.00.nc
 from netCDF4 import Dataset, MFDataset
@@ -850,29 +850,6 @@ def makeEnsembleListHRRR(wrfinit, timerange, ENS_SIZE):
 
     return (file_list, missing_list)
 
-def makeEnsembleListMPAS(wrfinit, timerange, ENS_SIZE, g193=False, debug=False):
-    # create lists of files (and missing file indices) for various file types
-    shr, ehr = timerange
-    file_list    = { 'wrfout':[], 'diag':[] }
-    missing_list = { 'wrfout':[], 'diag':[] }
-    missing_index = 0
-    for hr in range(shr,ehr+1):
-        wrfvalidstr = (wrfinit + timedelta(hours=hr)).strftime('%Y-%m-%d_%H.%M.%S')
-        yyyymmddhh = wrfinit.strftime('%Y%m%d%H')
-        for mem in range(1,ENS_SIZE+1):
-            diag   = '/glade/p/nsc/nmmm0046/schwartz/MPAS_ens_15-3km_mesh/POST/%s/ens_%d/diag.%s.nc'%(yyyymmddhh,mem,wrfvalidstr)
-            if g193:
-                diag   = '/glade/p/nsc/nmmm0046/schwartz/MPAS_ens_15-3km_mesh/POST/%s/ens_%d/diag_latlon_g193.%s.nc'%(yyyymmddhh,mem,wrfvalidstr)
-            if debug: print(diag)
-            if os.path.exists(diag): file_list['diag'].append(diag)
-            else: 
-                missing_list['diag'].append(missing_index)
-                print(diag + " not exist")
-            missing_index += 1
-    if not file_list['diag']:
-        print('Empty file_list')
-    return (file_list, missing_list)
-
 def makeEnsembleListArchive(wrfinit, timerange):
     # create lists of files (and missing file indices) for various file types
     shr, ehr = timerange
@@ -945,6 +922,7 @@ def readEnsemble(wrfinit, domain, timerange=None, fields=None, debug=False, ENS_
         print(fields)
     
     datadict = {}
+    file_list, missing_list = None, None
     #file_list, missing_list = makeEnsembleList(wrfinit, timerange, ENS_SIZE) #construct list of files
     #file_list, missing_list = makeEnsembleListNSC(wrfinit, timerange) #construct list of files
     #file_list, missing_list = makeEnsembleListStan(wrfinit, timerange, ENS_SIZE) #construct list of files
@@ -954,6 +932,10 @@ def readEnsemble(wrfinit, domain, timerange=None, fields=None, debug=False, ENS_
     #file_list, missing_list = makeEnsembleListHybrid(wrfinit, timerange) #construct list of files
     #file_list, missing_list = makeEnsembleListHREF(wrfinit, timerange, ENS_SIZE) #construct list of files
     #file_list, missing_list = makeEnsembleListHRRR(wrfinit, timerange, 1) #construct list of files
+    if not file_list:
+        print("no Ensemble file list. Exiting.")
+        print("Perhaps add --mesh mpas to make_webplot.py command line")
+        sys.exit(1)
 
     # loop through fill field, contour field, barb field and retrieve required data
     for f in ['fill', 'contour', 'barb']:

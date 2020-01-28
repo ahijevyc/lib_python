@@ -4,6 +4,7 @@ from netCDF4 import Dataset
 import datetime
 import numpy as np
 import pdb
+import os
 import re
 import atcf
 from fieldinfo import fieldinfo,readNCLcm
@@ -150,5 +151,30 @@ fieldinfo['shr01']  =  { 'fname'  : ['uzonal_1km','umeridional_1km','uzonal_surf
 for plev in ['200', '250', '300', '500', '700', '850', '925']:
     fieldinfo['wind'+plev] = { 'fname' : ['uzonal_'+plev+'hPa', 'umeridional_'+plev+'hPa'], 'filename':'diag', 'skip':50}
 
+
+def makeEnsembleListMPAS(wrfinit, timerange, ENS_SIZE, g193=False, debug=False):
+    # create lists of files (and missing file indices) for various file types
+    shr, ehr = timerange
+    file_list    = { 'wrfout':[], 'diag':[] }
+    missing_list = { 'wrfout':[], 'diag':[] }
+    missing_index = 0
+    for hr in range(shr,ehr+1):
+        wrfvalidstr = (wrfinit + datetime.timedelta(hours=hr)).strftime('%Y-%m-%d_%H.%M.%S')
+        yyyymmddhh = wrfinit.strftime('%Y%m%d%H')
+        for mem in range(1,ENS_SIZE+1):
+            diag   = '/glade/p/nsc/nmmm0046/schwartz/MPAS_ens_15-3km_mesh/POST/%s/ens_%d/diag.%s.nc'%(yyyymmddhh,mem,wrfvalidstr)
+            if g193:
+                diag   = '/glade/p/nsc/nmmm0046/schwartz/MPAS_ens_15-3km_mesh/POST/%s/ens_%d/diag_latlon_g193.%s.nc'%(yyyymmddhh,mem,wrfvalidstr)
+            if debug: print(diag)
+            if os.path.exists(diag): file_list['diag'].append(diag)
+            else: 
+                missing_list['diag'].append(missing_index)
+                print(diag + " not exist")
+            missing_index += 1
+    if debug:
+        print("file_list",file_list)
+    if not file_list['diag']:
+        print('Empty file_list')
+    return (file_list, missing_list)
 
 
