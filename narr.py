@@ -38,14 +38,16 @@ fieldinfo['precipacc']['fname'] = ['RAINNC']
 fieldinfo['t2']['fname'] = ['TMP_221_SFC']
 fieldinfo['t2']['units'] = 'degF'
 
-
+#######################################################################
 idir = "/glade/collections/rda/data/ds608.0/3HRLY/" # path to NARR
+#######################################################################
 
 # Get NARR file from tar file, convert to netCDF.
 # Return netCDF filename.
-def getnarr(valid_time, info, workdir, idir=idir):
-    vartype, file_suffix = info['filename'] # 3D, clm, flx, pbl, or sfc 
-    narr = workdir + '/' + valid_time.strftime("merged_AWIP32.%Y%m%d%H."+file_suffix+".nc")
+def get(valid_time, targetdir='.', narrtype=narr3D, idir=idir):
+    assert isinstance(valid_time, datetime.datetime) # make sure valid_time is a datetime object
+    vartype, file_suffix = narrtype # 3D, clm, flx, pbl, or sfc 
+    narr = targetdir + '/' + valid_time.strftime("merged_AWIP32.%Y%m%d%H."+file_suffix+".nc")
     # Convert to netCDF if netCDF file doesn't exist.
     if not os.path.exists(narr):
         narr_grb = narr[:-3] # without '.nc' suffix
@@ -63,8 +65,8 @@ def getnarr(valid_time, info, workdir, idir=idir):
             print("Found NARR tar file: "+narrtar)
             tar = tarfile.open(narrtar, mode='r')
             print("extracting "+os.path.basename(narr_grb))
-            ret = tar.extract(os.path.basename(narr_grb),path=workdir)
-        call_args = ["ncl_convert2nc", narr_grb, "-e", "grb", "-o", workdir]
+            ret = tar.extract(os.path.basename(narr_grb),path=targetdir)
+        call_args = ["ncl_convert2nc", narr_grb, "-e", "grb", "-o", targetdir]
         print(call_args)
         subprocess.check_call(call_args)
     return narr 
