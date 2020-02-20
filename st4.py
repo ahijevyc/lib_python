@@ -14,6 +14,9 @@ def clean(df, shapefile, interval, debug=False):
     
     # Drop valid times if there is an artifact in the shape
 
+
+    # define artifacts dictionary where (lon, lat) is the key and
+    # a list of times is the value
     if interval == "24h":
         # July 4 12z 24h accumulation has a row of pixels over 500mm and 1000mm near Lake Erie.
         artifacts = {
@@ -46,7 +49,7 @@ def clean(df, shapefile, interval, debug=False):
                 dt = datetime.datetime(*dt) # unpack tuple or get TypeError: an integer is required
                 if df.index.contains(dt):
                     if debug: print("st4.clean() dropping", dt, 'cause', p, 'artifact')
-                    df = df.drop(index=datetime.datetime(dt))
+                    df = df.drop(index=dt)
                 else:
                     if debug: print("st4.clean() no",dt,"in dataframe")
 
