@@ -5,6 +5,7 @@ import sys # for stderr output
 import pdb
 import numpy as np
 import datetime
+import atcf # for atcf.dist_bearing()
 import os # for basename
 import matplotlib.pyplot as plt
 import matplotlib.path as mpath
@@ -15,11 +16,15 @@ from scipy import spatial
 import scipy.ndimage as ndimage
 
 def spc_event_filename(event_type):
-    name = '/glade/work/ahijevyc/share/SPC/'+event_type+'/'
+    filename = '/glade/work/ahijevyc/share/SPC/'+event_type+'/'
     if event_type=='torn':
-        return "/glade/work/ahijevyc/share/SPC/1950-2017_actual_tornadoes.csv"
-    name = name + "1955-2017_"+event_type+".csv"
-    return name
+        # Update nominal last time when you update the filename.
+        nominal_last_time = datetime.datetime(2019,1,1,0,0,0,0,pytz.UTC) 
+        filename = "/glade/work/ahijevyc/share/SPC/1950-2018_actual_tornadoes.csv"
+        return filename, nominal_last_time
+    filename += "1955-2018_"+event_type+".csv"
+    nominal_last_time = datetime.datetime(2019,1,1,0,0,0,0,pytz.UTC) 
+    return filename, nominal_last_time
 
 def fix_severe_wx_report_variable_names(stat):
     # Replace unhelpful substrings in forecast variable name.
@@ -46,7 +51,12 @@ def get_storm_reports(
     # Create one DataFrame to hold all event types.
     all_rpts = pd.DataFrame()
     for event_type in event_types:
-        rpts_file = spc_event_filename(event_type)
+        rpts_file, nominal_last_time = spc_event_filename(event_type)
+
+        if end > nominal_last_time:
+            print("spc.get_storm_reports(): requested end time",end,"is later than nominal last time in ",rpts_file,nominal_last_time)
+            print("Do you need to download a new",event_type,"database from SPC?")
+            sys.exit(1)
 
         # csv format described in http://www.spc.noaa.gov/wcm/data/SPC_severe_database_description.pdf
         # SPC storm report files downloaded from http://www.spc.noaa.gov/wcm/#data to 
@@ -88,9 +98,9 @@ def get_storm_reports(
         if debug:
             print("input file:",rpts_file)
             print("read",len(rpts),"lines")
-            pdb.set_trace()
         rpts["event_type"] = event_type
         rpts["source"] = os.path.basename(rpts_file)
+
 
         # -9 = unknown tornado F-scale
         # Change -9 to NaN
@@ -112,9 +122,9 @@ def get_storm_reports(
         MDT = rpts['tz'] == 6
         if any(MDT):
             MDT_timezones = rpts[['om','date_time','tz','event_type', 'source']][MDT]
-            print("get_storm_reports: found",len(MDT_timezones),"MDT time zones")
             if debug:
-                print(MDT_timezones, file=sys.stderr)
+                print("spc.get_storm_reports(): found",len(MDT_timezones),"MDT time zones")
+                #print(MDT_timezones, file=sys.stderr)
                 print("changing tz from 6 to 3 because CST=MDT")
                 print("WARNING - proceeding with program. Wrote to SPC Apr 1 2019 about fixing these lines", file=sys.stderr)
             Email20190401PatrickMarsh = "...took over database in 2017 and have no record or documentation as to what those timezones are. Each year I append new information to the end of the old information, so timezones will continue to exist as is until I can learn what those time zones are.  take a look at the NCEI version of storm data. They may have information I do not."
@@ -171,11 +181,12 @@ def get_storm_reports(
         rpts["time"] = rpts["time"].dt.tz_localize(pytz.UTC)
 
         if any(rpts['tz'] == 0):
-            print("reports file: "+rpts_file, file=sys.stderr)
+            if debug:
+                print("spc.get_storm_reports(): reports file is "+rpts_file, file=sys.stderr)
             unknown_timezones = rpts[['om','date_time','tz','event_type', 'source']][rpts['tz'] == 0]
             if debug:
-                print("get_storm_reports: found",len(unknown_timezones),"unknown time zones")
-                print(unknown_timezones, file=sys.stderr)
+                print("spc.get_storm_reports(): found",len(unknown_timezones),"unknown time zones")
+                #print(unknown_timezones, file=sys.stderr)
 
         time_window = (rpts.time >= start) & (rpts.time < end)
         rpts = rpts[time_window]
@@ -207,20 +218,30 @@ def get_storm_reports(
             if debug:
                 print("Mod date of my reports file:     ", datetime.datetime.fromtimestamp(epoch1).strftime('%c'))
                 print("Mod date of Ryan's SQL database: ", datetime.datetime.fromtimestamp(epoch2).strftime('%c'))
-                pdb.set_trace()
+        elif any(sql_df.datetime.reset_index(drop=True) != rpts.time.reset_index(drop=True)): # Times don't all match
+            print("spc.read(): my database and Ryan's have same # of reports in the requested time window but they times aren't equal")
+            print("so I won't bother looking at if the lat and lons match up perfectly")
+            print(rpts,sql_df)
+            print("oh well")
         else:
             # See if they have the same times (must have same number of lines to test like this)
             if (sql_df["datetime"].values != rpts["time"].values).any():
-                print("My data times don't match Ryan's SQL database")
+                print("spc.get_storm_reports(): My data times don't match Ryan's SQL database")
             # See if they have the same locations
             same_columns = ["slat", "slon", "elat", "elon"]
             if (sql_df[same_columns].values != rpts[same_columns].values).any():
                 print("My data locations don't match Ryan's SQL database")
-                max_abs_difference = np.max(np.abs(sql_df[same_columns]-rpts[same_columns]))
-                print("max abs difference")
-                print(max_abs_difference)
-                if all(max_abs_difference < 0.000001):
+                # TODO: just show offending rows, but all columns
+                mine = rpts[same_columns]
+                his  = sql_df[same_columns]
+                print("mine",mine)
+                print("his",his)
+                max_abs_difference = np.abs(his.values-mine.values).max()
+                print("max abs difference", max_abs_difference)
+                if max_abs_difference < 0.000001:
                     print("who cares about such a small difference?")
+                elif max_abs_difference < 0.1:
+                    pass
                 else:
                     pdb.set_trace()
                     sys.exit(1)
@@ -304,6 +325,48 @@ def plotgridded(storm_reports, ax, gridlat2D=None, gridlon2D=None, scale=1, sigm
     return storm_rpts_gridded
 
 
+def polarplot(originlon, originlat, storm_reports, ax, zero_azimuth=0, scale=1.5, alpha=0.5, debug=False):
+
+    if storm_reports.empty:
+        if debug:
+            print("spc.polarplot(): storm reports DataFrame is empty. Returning None")
+        return None
+
+
+    # Color, size, marker, and label of wind, hail, and tornado storm reports
+    kwdict = symbol_dict(scale=scale)
+    storm_rpts_plots = []
+
+    for event_type in ["wind", "high wind", "hail", "large hail", "torn"]:
+        kwdict[event_type]["edgecolors"]="black"
+        kwdict[event_type]["linewidths"] = 0.3
+        if debug:
+            print("spc.polarplot(): looking for",event_type)
+        xrpts = storm_reports[storm_reports.event_type == event_type]
+        if debug:
+            print("spc.polarplot(): found",len(xrpts),event_type,"reports")
+        if len(xrpts) == 0:
+            continue
+        lons, lats = xrpts.slon.values, xrpts.slat.values
+        r_km, heading = atcf.dist_bearing(originlon, originlat, lons, lats)
+        # Filter out points beyond the max range of axis
+        maxr = ax.get_ylim()[1]
+        if all(r_km >= maxr):
+            if debug:
+                print("spc.polarplot():",event_type,"reports all outside axis range.")
+            continue
+        inrange = r_km < maxr
+        r_km = r_km[inrange]
+        heading = heading[inrange]
+        if debug:
+            print("spc.polarplot(): found",inrange.sum(),event_type,"reports inside axis range")
+        kwdict[event_type]["label"] += " (%d)" % inrange.sum()
+        theta = (heading - zero_azimuth + 360 ) % 360
+        ax.set_autoscale_on(False) # Don't rescale the axes with far-away reports (thought unneeded after filtering out pts beyond maxr, but symbol near maximum range autoscales axis to larger range.)
+        storm_rpts_plot = ax.scatter(np.radians(theta), r_km, alpha = alpha, **kwdict[event_type])
+        storm_rpts_plots.append(storm_rpts_plot)
+    return storm_rpts_plots
+
 def plot(storm_reports, ax, scale=1, drawradius=0, alpha=0.5, debug=False):
 
     if storm_reports.empty:
@@ -331,7 +394,6 @@ def plot(storm_reports, ax, scale=1, drawradius=0, alpha=0.5, debug=False):
         if drawradius > 0:
             if debug:
                 print("about to draw tissot circles for "+event_type)
-                pdb.set_trace()
             # With lons and lats, specifying more than one dimension allows individual points to be drawn. 
             # Otherwise a grid of circles will be drawn.
             # It warns about using PlateCarree to approximate Geodetic. It still warps the circles
@@ -403,8 +465,6 @@ def stormEvents(
         pdb.set_trace()
 
     ifile = ifile[0]
-    if debug:
-        pdb.set_trace()
 
     events = pd.read_csv(ifile)
     # This is ugly
