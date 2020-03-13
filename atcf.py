@@ -1,10 +1,11 @@
 import pandas as pd
 import pdb
 import re
-import pint
 import csv
+import warnings # to suppress useless pandas warning when sorting tz-aware index
 import os, sys
 from netCDF4 import Dataset
+from metpy.units import units
 import numpy as np
 
 # colors from tropicalatlantic.com
@@ -24,6 +25,19 @@ colors = {"NONTD": colors[0],
         "CAT5": colors[7]
         }
 
+def basins():
+    return {
+        "al": (-99,-22,0,38),
+        "Gulf": (-100,-80,21.5,34),
+        "Irma": (-89,-70,20,34),
+        "Irma1": (-81.1,-78.6,22.5,25.2),
+        "ep": (-175,-94,0,34),
+        "cp": (150,-135+360,0,34),
+        "io": (30,109,0,28),
+        "wp": (99,180,0,38),
+        "global": (-180,180,-20,70),
+        "track" : None # plot domain is simply the storm track
+        }
 
 def kts2category(kts):
    category = "TD"
@@ -47,6 +61,14 @@ ifile = '/glade/work/ahijevyc/work/atcf/Irma.ECMWF.dat'
 ifile = '/glade/scratch/mpasrt/uni/2018071700/latlon_0.500deg_0.25km/gfdl_tracker/tcgen/fort.64'
 
 
+def archive_path(atcfname):
+    assert atcfname[0:1] in ['a', 'b']
+    basin = atcfname[1:3]
+    cy = atcfname[3:5]
+    year = atcfname[5:9]
+    apath = "/glade/work/ahijevyc/atcf/archive/"+year+"/"+atcfname+".dat"  # provide path to atcf archive
+    return apath 
+
 def cyclone_phase_space_columns():
     names = []
     names.append('cpsB') # Cyclone Phase Space "Parameter B" for thermal asymmetry. (Values are *10)
@@ -58,40 +80,72 @@ def cyclone_phase_space_columns():
 def getcy(cys):
     return cys[0:2]
 
+def speed_heading(lon, lat, time):
 
+    # return speed and heading from previous to present location
+    # TODO: from previous halfway point to next halfway point
+    speed = np.zeros_like(lon)
+    heading = np.zeros_like(lon)
+
+    for i, (lon1, dlon, lat1, dlat, dt) in enumerate(zip(lon, lon.diff(),lat, lat.diff(), time.diff())):
+        if np.isnan(dlon):
+            continue
+        d_km, head = dist_bearing(lon1-dlon,lat1-dlat,np.array(lon1),np.array(lat1))
+        heading[i] = head
+        d_km = d_km * units["km"]
+        dt = dt.total_seconds() * units.s
+        speed[i] = np.nan
+        if dt != 0: # avoid RuntimeWarning: invalid value encountered in double_scalars /divide by zero encountered in double_scalars
+            speed[i] = (d_km/dt).to("knots").m # return speed in knots
+    return speed, heading
+
+
+def get_stormname(df):
+    # stormname column is blank prior to 2008-ish
+    stormname = df.stormname[df.vmax == df.vmax.max()]
+    stormname = stormname.iloc[0] # could be more than one match. take first one.
+
+    # Sometimes stormname column at time with highest vmax is empty string after valid stormname. (e.g. Rita 2005)
+    if stormname == "":
+        stormname = df.stormname.replace("",np.nan).ffill()[df.vmax == df.vmax.max()]
+        stormname = stormname.iloc[0] # could be more than one match. take first one.
+    if not isinstance(stormname, str) and np.isnan(stormname):
+        stormname = ""
+    return stormname
+    
 def mean_track(df):
 
     # When aggregating numbers, take the mean; when aggregating strings or categories, take the max. Tried mode but it sometimes returned more than one value.
     agg_dict = {
-            "technum" : 'mean', 
-            "lat"   : 'mean', 
-            "lon"   : 'mean', 
-            "vmax"  : 'mean',
-            "minp"  : 'mean',
-            "ty"    :     pd.Series.max,
-            "rad1"  : 'mean',
-            "rad2"  : 'mean',
-            "rad3"  : 'mean',
-            "rad4"  : 'mean',
-            "pouter": 'mean',
-            "router": 'mean',
-            "rmw"   : 'mean',
-            "gusts" : 'mean',
-            "eye"   : 'mean',
-            "subregion" : pd.Series.max,
-            "maxseas":'mean',
-            "initials"  : pd.Series.max,
-            "dir"   : 'mean',
-            "speed" : 'mean',
-            'stormname' : pd.Series.max,
-            'depth'     : pd.Series.max,
-            "seas"  : 'mean',
-            "seas1" : 'mean',
-            "seas2" : 'mean',
-            "seas3" : 'mean',
-            "seas4" : 'mean',
-            "userdefine1":pd.Series.max,
-            "userdata1"  :pd.Series.max,
+            "technum"  : 'mean', 
+            "lat"      : 'mean', 
+            "lon"      : 'mean', 
+            "vmax"     : 'mean',
+            "minp"     : 'mean',
+            "ty"         : pd.Series.max,
+            "rad1"     : 'mean',
+            "rad2"     : 'mean',
+            "rad3"     : 'mean',
+            "rad4"     : 'mean',
+            "pouter"   : 'mean',
+            "router"   : 'mean',
+            "rmw"      : 'mean',
+            "gusts"    : 'mean',
+            "eye"      : 'mean',
+            "subregion"  : pd.Series.max,
+            "maxseas"  : 'mean',
+            "initials"   : pd.Series.max,
+            "heading"  : 'mean',
+            "speed"    : 'mean',
+            'stormname'  : pd.Series.max,
+            'depth'      : pd.Series.max,
+            "seas"     : 'mean',
+            "seas1"    : 'mean',
+            "seas2"    : 'mean',
+            "seas3"    : 'mean',
+            "seas4"    : 'mean',
+            "userdefine1": pd.Series.max,
+            "userdata1"  : pd.Series.max,
             }
 
     # Optional columns. If they are not in df, you get KeyError in aggregate.
@@ -108,6 +162,82 @@ def mean_track(df):
     df["model"] = "MEAN"
     return df
 
+def interpolate(df, interval, debug=False):
+
+    if interval not in ['1H','3H','6H','12H','24H']:
+        print("atcf.interpolate(): unexpected time interval",interval)
+        print("Expected one of ['1H','3H','6H','12H','24H']")
+        sys.exit(1)
+
+    # Copied from ~ahijevyc/bin/interpolate_atcf.py on Mar 2, 2020. This method should supercede that script.
+
+    if debug:
+        print("atcf.interpolate():",interval)
+
+    nbad = df.valid_time.isna().sum()
+    if nbad > 0:
+        if debug:
+            print("Dropping",nbad,"wind radii line(s) with NaN valid_time")
+        df.dropna(how='all', subset=['valid_time'], inplace=True)
+
+
+    df2 = pd.DataFrame()
+
+    # Separate best track from model tracks.
+    besttrack = df[df.model == 'BEST']
+    othrtrack = df[df.model != 'BEST']
+
+    # Interpolate in time
+
+
+    if not besttrack.empty:
+        # Used to group by rad before interpolating, but when available rads change with time,
+        # treating them separately is incorrect
+        # In case of best track, don't separate by initial_time. Put multiple initial_times into one group. They all have same fhr=0.
+        for index, group in besttrack.groupby(['basin', 'cy', 'model']):
+            if debug: print("atcf.interpolate(): setting index of",index,"to valid_time")
+            x = group.set_index('valid_time')
+            if debug: print("atcf.interpolate(): interpolating",index,"in time")
+            with warnings.catch_warnings():
+                # Pandas 0.24.1 emits useless warning when sorting tz-aware index
+                warnings.simplefilter("ignore")
+                x = x.resample(interval).interpolate(method='time') # TODO: understand FutureWarning about timezone-aware DatetimeArray
+            if debug: print("atcf.interpolate(): padding",index,"and resetting index")
+            x = x.fillna(method='pad').reset_index()
+            # NaT in column not handled by df.interpolate().
+            x["initial_time"] = x["valid_time"]
+            # redo heading because of circular values get messed up in interpolation
+            if debug:
+                print("atcf.interpolate(): redo best track headings")
+            speed, heading = speed_heading(x.lon, x.lat, x.valid_time)
+            x.loc[:,"heading"] = heading
+            df2 = df2.append(x)
+
+    # handle multiple models, init_times, etc.
+    if not othrtrack.empty:
+        for index, group in othr.groupby(['basin', 'cy', 'initial_time', 'model', 'rad']):
+            # Used to say drop=False in set_index() method. but I want the interpolate() method to affect the valid_time
+            # and for those interpolated times to be a column again by applying reset_index() method.
+            if debug:
+                pdb.set_trace()
+            x = group.set_index('valid_time').resample(interval).interpolate(method='time').reset_index()
+            # TODO: do I need to fix initial_time column like I did for besttrack above? No. 
+            # initial_time is in the index of this group dataframe.
+            # perhaps look at github.com/pandas-dev/issues/11701 for future hints.
+            # redo heading because of circular values get messed up in interpolation
+            if debug:
+                print("atcf.interpolate(): redo model track headings")
+            speed, heading = speed_heading(x.lon, x.lat, x.valid_time)
+            x.loc[:,"heading"] = heading
+            x = x.dropna(how='all', subset=['initial_time']) # I think this cleans up undefined extrapolated times
+            df2 = df2.append(x)
+
+    df2.sort_values(by=['basin','cy','initial_time','model','valid_time','rad'], inplace=True)
+    return df2
+
+
+
+
 
 def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
     # Read data into Pandas Dataframe
@@ -119,7 +249,7 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
     # Updated format https://www.nrlmry.navy.mil/atcf_web/docs/database/new/abdeck.txt 
     atcfcolumns=["basin","cy","initial_time","technum","model","fhr","lat","lon","vmax","minp","ty",
         "rad", "windcode", "rad1", "rad2", "rad3", "rad4", "pouter", "router", "rmw", "gusts", "eye",
-        "subregion", "maxseas", "initials", "dir", "speed", "stormname", "depth", "seas", "seascode",
+        "subregion", "maxseas", "initials", "heading", "speed", "stormname", "depth", "seas", "seascode",
         "seas1", "seas2", "seas3", "seas4", "userdefine1", "userdata1", "userdefine2", "userdata2",
         "userdefine3", "userdata3", "userdefine4", "userdata4"]
 
@@ -130,8 +260,8 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
             # The problem with CY is ATCF only reserves 2 characters for it.
             "cy" : lambda x: x.strip(), # cy is not always an integer (e.g. 10E) 
             "initial_time" : lambda x: pd.to_datetime(x.strip(),format='%Y%m%d%H'),
-            "vmax": float,
-            "minp": float,
+            #"vmax": float,
+            #"minp": float,
             "ty": str, # why was this not in here for so long?
             "rad" : lambda x: x.strip(), # not a continuous value; it is a category. Important for interpolating in time.
             "windcode" : lambda x: x[-3:],
@@ -167,7 +297,7 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
             "seas2"    : float,
             "seas3"    : float,
             "seas4"    : float,
-            'dir'      : float,
+            'heading'  : float,
             'speed'    : float,
             "seas"     : float,
            } 
@@ -175,24 +305,24 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
     # Tried using converter for these columns, but couldn't convert 4-space string to float.
     # If you add a key na_values, also add it to dtype dict, and remove it from converters.
     na_values = {
-            "technum" : 3*' ',
-            "rad1"    : 4*' ',
-            "rad2"    : 4*' ',
-            "rad3"    : 4*' ',
-            "rad4"    : 4*' ',
-            "pouter"  : 4*' ',
-            "router"  : 4*' ',
-            "rmw"     : 4*' ',
-            "gusts"   : 4*' ',
-            "eye"     : 4*' ',
-            "maxseas" : 4*' ',
-            "dir"     : 4*' ',
-            "speed"   : 4*' ',
-            "seas"    : 3*' ', # one less than other columns
-            "seas1"   : 4*' ',
-            "seas2"   : 4*' ',
-            "seas3"   : 4*' ',
-            "seas4"   : 4*' ',
+            "technum"  : 3*' ',
+            "rad1"     : 4*' ',
+            "rad2"     : 4*' ',
+            "rad3"     : 4*' ',
+            "rad4"     : 4*' ',
+            "pouter"   : 4*' ',
+            "router"   : 4*' ',
+            "rmw"      : 4*' ',
+            "gusts"    : 4*' ',
+            "eye"      : 4*' ',
+            "maxseas"  : 4*' ',
+            "heading"  : 4*' ',
+            "speed"    : 4*' ',
+            "seas"     : 3*' ', # one less than other columns
+            "seas1"    : 4*' ',
+            "seas2"    : 4*' ',
+            "seas3"    : 4*' ',
+            "seas4"    : 4*' ',
             }
 
 
@@ -205,12 +335,6 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
     del reader
     with open(ifile) as f:
         max_num_cols = max(len(line.split(',')) for line in f)
-    if max_num_cols != num_cols:
-        print("test line has", num_cols, "columns, but another line has ", max_num_cols, "columns.")
-        # It's hard to deal with userdefined columns and data in a file with multiple types of models.
-        print("atcf.read() may not handle different numbers of columns.")
-        #print("Exiting.")
-        #sys.exit(2)
 
     # Output from HWRF vortex tracker, fort.64 and fort.66
     # are mostly ATCF format but have subset of columns
@@ -244,7 +368,7 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
             print('redefining columns 22-31')
         names.extend(cyclone_phase_space_columns())
         names.append('warmcore')
-        names.append('dir')
+        names.append('heading')
         names.append('speedms')
         names.append('vort850mb')
         names.append('maxvort850mb')
@@ -285,6 +409,7 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
             print(name+": "+v)
         print("converters=",converters)
         print("dype=", dtype)
+
     df = pd.read_csv(ifile,index_col=None,header=None, delimiter=",", usecols=usecols, names=names, 
             converters=converters, na_values=na_values, dtype=dtype, skipinitialspace=True, engine='c') # engine='c' is faster than engine="python"
     # fort.64 has asterisks sometimes. Problem with hwrf_tracker. 
@@ -305,13 +430,45 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
     df.lon = lon
 
     if debug:
+        print("finished converting string lat/lons to float")
         pdb.set_trace()
-    # One could add minutes for BEST tracks. 2-digit minutes are in the TECHNUM column for BEST tracks.
+
+
+    if max_num_cols != num_cols and df.model.nunique() > 1:
+        print("atcf.read(): test line has", num_cols, "columns, but another line has ", max_num_cols, "columns.")
+        print("atcf.read(): may not handle different numbers of columns.")
+        print("It's hard to deal with userdefined columns and data in a file with multiple types of models.")
+        #print("Exiting.")
+        #sys.exit(2)
 
     # Derive valid time.   valid_time = initial_time + fhr
-    # Use datetime module to add, where yyyymmddh is a datetime object and fhr is a timedelta object.
     df['valid_time'] = df.initial_time + pd.to_timedelta(df.fhr, unit='h')
+    # add minutes for BEST tracks. 2-digit minutes are in the TECHNUM column for BEST tracks. TECHNUM means something else for non-BEST tracks and shouldn't be added like a timedelta.
+    besttracks = df[df.model == 'BEST']
+    besttracks['valid_time']   +=  pd.to_timedelta(besttracks.technum.fillna(0), unit='minute')
+    besttracks['initial_time'] +=  pd.to_timedelta(besttracks.technum.fillna(0), unit='minute')
+    df[df.model == 'BEST'] = besttracks
 
+
+
+
+    # Prior to 1999, rad column is blank. Fill with string zeros. 
+    # Downstream programs assume rads are convertable to floats. Empty strings are not convertable to floats.
+    if "rad" not in df.columns or all(df.rad == ''):
+        if debug:
+            print("atcf.read(): Empty rad column. This happens in pre-2000 files. Changing to string '0' so we can convert to float downstream")
+        df["rad"] = '0'
+
+    # sanity check for rad values
+    if not all(df.rad.isin(['0','34','50','64'])):
+        print("atcf.read(): unexpected rad value(s) in atcf file",ifile)
+        print(df.rad.value_counts())
+        # adecks before 2002 had 35-knot lines, not 34. That's okay. 
+        if df.valid_time.min().year > 2001:
+            print("atcf.read(): this should not happen with post-2001 files. Exiting.")
+            sys.exit(1)
+
+          
     for col in atcfcolumns:
         if col not in df.columns:
             if debug:
@@ -329,7 +486,7 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
                 df[col] = '   '
 
             # Numbers are NaN
-            if col in ['rmw','gusts','eye','maxseas','dir','speed']:
+            if col in ['rmw','gusts','eye','maxseas','heading','speed']:
                 df[col] = np.NaN
 
             # Strings are empty
@@ -363,9 +520,17 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
         df = df.reset_index()  # and all the indexes are moved back to columns
         # Tried leaving as MultiIndex DataFrame but it led to all sorts of problems.
 
+    fill_speed_heading = all(((df.speed == 0) | pd.isnull(df.speed)) & ((df.heading == 0) | pd.isnull(df.heading))) # assume bad if everything is zero
+    if fill_speed_heading:
+        if debug:
+            print("Deriving speed and heading")
+        speed, heading = speed_heading(df.lon, df.lat, df.valid_time)
+        df.loc[:,"speed"] = speed
+        df.loc[:,"heading"] = heading
+
     return df
 
-def f2s(x):
+def f2s(x): # float to string
     # Convert absolute value of float to integer number of tenths for ATCF lat/lon
     # called by lat2s and lon2s
     x *= 10
@@ -388,11 +553,11 @@ def lon2s(lon):
 #   lon1 - longitude of origin
 #   lat1 - latitude of origin
 #   lons - longitudes of points to get distance to
-#   lats - lattudes of points to get distance to
+#   lats - latitudes of points to get distance to
 # Returns 2 things:
 #   1) distance in km
-#   2) initial bearing from 1st pt to 2nd pt.
-def dist_bearing(lon1,lat1,lons,lats):
+#   2) initial bearing from 1st pt (lon1, lat1) to an array of other points (lons, lats).
+def dist_bearing(lon1,lat1,lons,lats,debug=False):
     assert lat1 < 90, "lat1 > 90"
     assert lat1 > -90, "lat1 < -90"
     assert lats.max() < 90, "lats element > 90"
@@ -403,7 +568,13 @@ def dist_bearing(lon1,lat1,lons,lats):
     lats = np.radians(lats)
     # great circle distance. 
     arg = np.sin(lat1)*np.sin(lats)+np.cos(lat1)*np.cos(lats)*np.cos(lon1-lons)
-    #arg = np.where(np.fabs(arg) < 1., arg, 0.999999) 
+    #arg = np.where(np.fabs(arg) < 1., arg, 0.999999) # sometimes arg = 1.000000000000002
+    if (np.fabs(arg) > 1).any():
+        if debug:
+            print("atcf.dist_bearing(): minarg=",arg.min(),"maxarg=",arg.max())
+
+    arg = np.where(arg <=  1., arg,  1.) # sometimes arg = 1.000000000000002 
+    arg = np.where(arg >= -1., arg, -1.) 
 
     dlon = lons-lon1
     bearing = np.arctan2(np.sin(dlon)*np.cos(lats), np.cos(lat1)*np.sin(lats) - np.sin(lat1)*np.cos(lats)*np.cos(dlon)) 
@@ -416,11 +587,16 @@ def dist_bearing(lon1,lat1,lons,lats):
     
     # Ellipsoid [CLARKE 1866]  Semi-Major Axis (Equatorial Radius)
     a = 6378.2064
+
+    if (np.fabs(arg) > 1).any():
+        print("atcf.dist_bearing(): arg=",arg)
+        pdb.set_trace()
+        
     return np.arccos(arg)* a, bearing 
 
 
-ms2kts = pint.UnitRegistry()["m/s"].to("knots").magnitude # 1.94384
-km2nm  = pint.UnitRegistry()["km"].to("nautical_mile").magnitude # 0.539957
+ms2kts = 1 * units["m/s"].to("knots").magnitude # 1.94384
+km2nm  = 1 * units["km"].to("nautical_mile").magnitude # 0.539957
 
 quads = {'NE':0, 'SE':90, 'SW':180, 'NW':270}
 thresh_kts = np.array([34, 50, 64])
@@ -698,7 +874,7 @@ def write(ofile, df, fullcircle=False, debug=False):
         atcf_lines += "{:>3s}, ".format(row.subregion) # supposedly 1 character, but always 3 in official b-decks
         atcf_lines += "{:3.0f}, ".format(row.maxseas)
         atcf_lines += "{:>3s}, ".format(row.initials)
-        atcf_lines += "{:3.0f}, ".format(row.dir)
+        atcf_lines += "{:3.0f}, ".format(row.heading)
         atcf_lines += "{:3.0f}, ".format(row.speed)
         atcf_lines += "{:>10s}, ".format(row.stormname)
         atcf_lines += "{:>1s}, ".format(row.depth)
