@@ -10,12 +10,11 @@ import requests
 idir = '/glade/work/ahijevyc/share/ibtracs/'
 
 
-def get_atcfname_from_stormname(stormname, version="04r00_20200308", debug=False):
-    justname, year = stormname.split()
-    justname = justname.upper()
+def get_atcfname_from_stormname_year(stormname, year, version="04r00_20200308", debug=False):
+    justname = stormname.upper()
     ifile = idir + "IBTrACS_SerialNumber_NameMapping_v"+version+".txt"
     if debug:
-        print("ibtracs.get_atcfname_from_stormname(): searching for",stormname,"in",ifile)
+        print("ibtracs.get_atcfname_from_stormname_year(): searching for",stormname,year,"in",ifile)
     atcfname=None
     for line in open(ifile, "r"):
         if line[0:4] == year and re.search(justname, line):
@@ -23,7 +22,7 @@ def get_atcfname_from_stormname(stormname, version="04r00_20200308", debug=False
             atcfname = m.group(1)
             return atcfname
     if not atcfname:
-        print("ibtracs.get_atcfname_from_stormame(): no",stormname,"in",ifile)
+        print("ibtracs.get_atcfname_from_stormame_year(): no",stormname,year,"in",ifile)
         sys.exit(1)
 
 def ibtracs_to_atcf(df, debug=False):
@@ -39,27 +38,29 @@ def ibtracs_to_atcf(df, debug=False):
             "SUBBASIN"      : "subregion", # is SUBBASIN = subregion?
             "USA_EYE"       : "eye",
             "USA_GUST"      : "gusts",
-            "USA_LAT"       : "lat",
-            "USA_LON"       : "lon",
+            "LAT"           : "lat",
+            "LON"           : "lon",
             "USA_POCI"      : "pouter",
             "USA_ROCI"      : "router",
-            "USA_PRES"      : "minp",
+            "WMO_PRES"      : "minp",
             "USA_RMW"       : "rmw",
             "USA_SEAHGT"    : "seas",
             "USA_SEARAD_NE" : "seas1",
             "USA_SEARAD_SE" : "seas2",
             "USA_SEARAD_SW" : "seas3",
             "USA_SEARAD_NW" : "seas4",
-            "USA_WIND"      : "vmax",
+            "WMO_WIND"      : "vmax",
             }
     df.rename(columns = column_match, inplace=True)
 
 
+
     df["valid_time"] = pd.to_datetime(df["valid_time"])
     df["initial_time"] = df["valid_time"]
-    df["windcode"] = "NEQ"
-    df["fhr"] = 0
     df["technum"] = np.nan
+    df["model"] = 'BEST'
+    df["fhr"] = 0
+    df["windcode"] = "NEQ"
     df["maxseas"] = np.nan
     df["initials"] = ""
     df["depth"] = "X"
@@ -95,49 +96,61 @@ def ibtracs_to_atcf(df, debug=False):
 
 
 
-def get_atcf(atcfname, version="04r00", debug=False):
+def get_atcf(stormname, year, version="04r00", basin="", debug=False):
+
+    # Get "ALL" file by default. 
+    # Specify basin keyword to read a smaller, more specialized file.
+
     dtype = {
             'BASIN':str,
             'DS824_STAGE': str,
             'HKO_CAT'  : str,
+            'LAT': float, 
+            'LON': float, 
             'MLC_CLASS': str,
             'NEWDELHI_GRADE': str,
             'NEUMANN_CLASS': str, 
             'USA_AGENCY': str, 
             'USA_ATCF_ID': str, 
             'USA_GUST': str, 
+            'USA_LAT': float, 
+            'USA_LON': float, 
             'USA_RECORD': str, 
             'USA_SEAHGT': str,
             'USA_STATUS': str,
             'WMO_AGENCY':str
             }
-    na_values = ' '
+    na_values = [' ','']
 
-    basin = atcfname[0:2]
-    if basin.lower() == 'al':
+    basin = basin.lower()
+    if basin == 'al':
         region = "NA" # North Atlantic
-    elif basin.lower() == 'ep':
+    elif basin == 'ep':
         region = "EP"
-    elif basin.lower() == 'ni':
+    elif basin == 'ni':
         region = "NI"
-    elif basin.lower() == 'sa':
+    elif basin == 'sa':
         region = "SA"
-    elif basin.lower() == 'si':
+    elif basin == 'si':
         region = "SI"
-    elif basin.lower() == 'sp':
+    elif basin == 'sp':
         region = "SP"
-    elif basin.lower() == 'wp':
+    elif basin == 'wp':
         region = "WP"
     else:
         region = "ALL"
     ifile = idir+'ibtracs.'+region+'.list.v'+version+'.csv'
     if not os.path.exists(ifile):
-        url = "https://www.ncei.noaa.gov/data/international-best-track-archive-for-climate-stewardship-ibtracs/v"+version+"/access/csv/ibtracs."+region+".list.v"+version+".csv"
+        url  = "https://www.ncei.noaa.gov/data/"
+        url += "international-best-track-archive-for-climate-stewardship-ibtracs/"
+        url += "v"+version+"/access/csv/ibtracs."+region+".list.v"+version+".csv"
         if debug:
             print(ifile,"not found. Downloading from", url)
         myfile = requests.get(url)
         open(ifile, "wb").write(myfile.content)
-    df = pd.read_csv(ifile, delimiter=',', skipinitialspace=True, header=[0,1], na_values=na_values, dtype=dtype)
+    # keep_default_na=False . we don't want "NA" or North Atlantic to be treated as NA/NaN.
+    # If skipinitialspace=True, add empty string to list of na_values. or you get TypeError. can't convert string to float64.
+    df = pd.read_csv(ifile, delimiter=',', skipinitialspace=True, header=[0,1], na_values=na_values, keep_default_na=False, dtype=dtype)
     if debug:
         print("ibtracs.get_atcf(): read",len(df),"lines from",ifile)
         pdb.set_trace()
@@ -154,15 +167,20 @@ def get_atcf(atcfname, version="04r00", debug=False):
     df = df.droplevel(1, axis='columns')
 
     #df = units.pandas_dataframe_to_unit_arrays(df, column_units=column_units) # creates a "united array" which is a dictionary. what use is that?
-    imatch = df['USA_ATCF_ID'] == atcfname.upper()
+    imatch = (df['NAME'].str.upper() == stormname.upper()) & (df['SEASON'].astype(str) == str(year))
     if imatch.sum() == 0:
-        print("No",atcfname.upper(),"in ibtracs.")
+        print("No",stormname.upper(), year,"in ibtracs.")
         pdb.set_trace()
     df = df[imatch]
+
+    # sanity check - are the wmo and usa lat/lons similar?
+    assert (df["LAT"]-df["USA_LAT"]).abs().max() < 0.2
+    assert (df["LON"]-df["USA_LON"]).abs().max() < 0.2
+
     df = ibtracs_to_atcf(df)
     if debug:
-        print("ibtracs.get_atcf(): returning",len(df),"lines for",atcfname)
-    return df
+        print("ibtracs.get_atcf(): returning",len(df),"lines for",stormname,year)
+    return df, ifile
 
 def get_stormname_from_atcfname(atcf_filename, version="04r00_20200308", debug=False):
     bname = os.path.basename(atcf_filename)
