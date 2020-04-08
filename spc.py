@@ -1,4 +1,5 @@
 import pandas as pd
+from pandas.api.types import CategoricalDtype
 import pytz
 import glob
 import sys # for stderr output
@@ -14,6 +15,38 @@ from metpy.units import units
 import sqlite3
 from scipy import spatial
 import scipy.ndimage as ndimage
+
+
+def RogerEdwards(rename=True):
+    ifile = "/glade/u/home/ahijevyc/TCTor95-18.xls - Full List.csv"
+    REdf = pd.read_csv(ifile, delimiter=',', parse_dates=[["Year","UTC-Mo.","UTC-Date","UTC time"]], 
+            index_col=0, skiprows=1, header=[0], nrows=1506) # skipfooter=23)
+    # skipfooter=23 could be used, but 'c' engine doesn't handle it. 'c' engine is faster than 'python' engine.
+    REdf = REdf.tz_localize(tz='UTC')
+
+    if rename:
+        REdf.index.set_names('datetime', inplace=True)
+        # Roger's columns have nice, descriptive names, but
+        # rename some of Roger's columns to match terse SPC database.
+        RE2SPC = {
+                "LAT-start (path)" : "slat",
+                "LON-start (path)" : "slon",
+                "LAT-end (path)"   : "elat",
+                "LON-end (path)"   : "elon"
+                }
+
+        REdf = REdf.rename(columns=RE2SPC)
+
+
+    # Fix probable typo. "ST" should be "TS"
+    REdf.loc[REdf["TC Cat"] == "ST","TC Cat"] = "TS"
+    # Convert to dtype="category" - could do this at read_csv step, but then "ST" exists as a category.
+    cat_type = CategoricalDtype(categories=["N","TD","TS","H","MH"], ordered=True)
+    REdf["TC Cat"] = REdf["TC Cat"].astype(cat_type)
+
+
+    return REdf
+
 
 def spc_event_filename(event_type):
     filename = '/glade/work/ahijevyc/share/SPC/'+event_type+'/'
@@ -36,6 +69,28 @@ def fix_severe_wx_report_variable_names(stat):
     stat.replace({'FCST_VAR':r'_ge0\.0381'}, {'FCST_VAR' : '>=1.5"'}, regex=True, inplace=True)
     return stat
 
+
+def RyanSobash(start=None, end=None, event_type="torn", debug=False):
+    sobash_db = "/glade/u/home/sobash/2013RT/REPORTS/reports_all.db"
+    conn = sqlite3.connect(sobash_db)
+    sqltable = "reports_" + event_type
+    # Could apply a datetime range here (WHERE datetime BETWEEN yyyy/mm/dd hh:mm:ss and blah), but converting from UTC to CST is tricky.
+    sqlcommand = "SELECT * FROM "+sqltable
+    sql_df = pd.read_sql_query(sqlcommand, conn, parse_dates=['datetime'])
+    conn.close()
+    # Add 6 hours to datetime. This converts to UTC.
+    sql_df["datetime"] = sql_df["datetime"] + pd.to_timedelta(6, unit='h')
+    # make it aware of its UTC timezone.
+    sql_df["datetime"] = sql_df["datetime"].dt.tz_localize(pytz.UTC)
+    sql_df = sql_df[(sql_df.datetime >= start) & (sql_df.datetime < end)]
+    sql_df["dbfile"] = sobash_db
+    if debug:
+        print("From Ryan's SQL database",sobash_db)
+        print(sqlcommand)
+        print(sql_df.to_string())
+
+    return sql_df, sobash_db   
+
 def get_storm_reports( 
         start = datetime.datetime(2016,6,10,0,0,0,0,pytz.UTC), 
         end   = datetime.datetime(2016,7,1,0,0,0,0,pytz.UTC), 
@@ -47,6 +102,8 @@ def get_storm_reports(
         print("storm_reports: start:",start)
         print("storm_reports: end:",end)
         print("storm_reports: event types:",event_types)
+
+    assert isinstance(event_types,list)
 
     # Create one DataFrame to hold all event types.
     all_rpts = pd.DataFrame()
@@ -195,24 +252,13 @@ def get_storm_reports(
 
         # Sanity Check:
         # Verify I get the same thing as Ryan Sobash's sqlite3 database
-        sobash_db = "/glade/u/home/sobash/2013RT/REPORTS/reports_all.db"
-        conn = sqlite3.connect(sobash_db)
-        sqltable = "reports_" + event_type
-        # Could apply a datetime range here (WHERE datetime BETWEEN yyyy/mm/dd hh:mm:ss and blah), but converting from UTC to CST is tricky.
-        sqlcommand = "SELECT * FROM "+sqltable
-        sql_df = pd.read_sql_query(sqlcommand, conn, parse_dates=['datetime'])
-        conn.close()
-        # Add 6 hours to datetime. This converts to UTC.
-        sql_df["datetime"] = sql_df["datetime"] + pd.to_timedelta(6, unit='h')
-        # make it aware of its UTC timezone.
-        sql_df["datetime"] = sql_df["datetime"].dt.tz_localize(pytz.UTC)
-        sql_df = sql_df[(sql_df.datetime >= start) & (sql_df.datetime < end)]
+        sql_df, Sobash_dbfile = RyanSobash(start=start, end=end, event_type=event_type)
 
         # See if they have the same number of rows
         if len(sql_df) != len(rpts):
             print("I have",len(rpts),"reports, but Ryan's SQL database has",len(sql_df),".")
             epoch1 = os.path.getmtime(rpts_file)
-            epoch2 = os.path.getmtime(sobash_db)
+            epoch2 = os.path.getmtime(Sobash_dbfile)
             if epoch2 > epoch1:
                 print("Ryan's database may be modified more recently but it may have duplicate reports.")
             if debug:
@@ -245,11 +291,6 @@ def get_storm_reports(
                 else:
                     pdb.set_trace()
                     sys.exit(1)
-        if debug:
-            print("From Ryan's SQL database")
-            print(sqlcommand)
-            print(sql_df.to_string())
-
 
         all_rpts = all_rpts.append(rpts, ignore_index=True, sort=False)
 
