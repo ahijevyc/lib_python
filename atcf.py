@@ -797,23 +797,26 @@ def update_df(df, row, raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm, gridfi
     # Called by origgrid and origmesh
 
     if debug:
-        print("atcf.update_df: before update_df\n", row[['valid_time','lon','lat', 'vmax', 'minp', 'rmw']]) 
+        print("atcf.update_df(): before update_df\n", row[['valid_time','lon','lat', 'vmax', 'minp', 'rmw']]) 
     row["vmax"] = raw_vmax_kts
     row["minp"] = raw_minp
     row["rmw"]  = raw_RMW_nm
     # Add note of original mesh = True in user data (not defined) column
-    if 'origmeshTrue' not in row.userdata1:
+    if 'origmeshTrue' in row.userdata1:
+        print("wait. this row already has original mesh values")
+        pdb.set_trace()
+    else:
         moreuserdata1 = 'origmeshTrue wind_radii_method '+ wind_radii_nm["wind_radii_method"]
         if gridfile is not None:
             # Append origmesh file to userdata1 column (after a comma)
-            moreuserdata1 += ', ' + gridfile
+            moreuserdata1 += ', ' + os.path.realpath(gridfile)
         if debug:
             print("appending "+moreuserdata1+" to row.userdata1")
         row.userdata1 += moreuserdata1
     if debug:
         print('after', row[['vmax', 'minp', 'rmw']]) 
 
-    # hacky - can probably be cleaner. why the [0]? avoid (1, 44) with (44,) setting mismatch error
+    # Update df
     df.loc[row.name,:] = row
 
     # Append 34/50/64 knot lines to DataFrame
@@ -886,6 +889,10 @@ def write(ofile, df, fullcircle=False, debug=False):
         atcf_lines += "{:4.0f}, ".format(row.seas4)
         atcf_lines += "{:s}, ".format(row.userdefine1) # Described as 1-20 chars in atcf doc. 
         atcf_lines += "{:s}, ".format(row.userdata1) # described as 1-100 chars in atcf doc
+        # Propagate optional columns
+        for col in ["userdefine2", "userdata2", "userdefine3", "userdata3", "userdefine4", "userdata4"]:
+            if col in row:
+                atcf_lines += "{:s}, ".format(row[col]) 
         atcf_lines += "\n"
 
     atcf_lines = atcf_lines.replace("nan","   ")
@@ -905,14 +912,17 @@ def origgridWRF(df, griddir, grid="d03", wind_radii_method = "max", debug=False)
     wregex = r'WF((\d\d)|(CO))'
     WRFmember = df.model.str.extract(wregex, flags=re.IGNORECASE)
     # column 0 will have match or null
-    if pd.isnull(WRFmember[0]).any():
+    if pd.isnull(WRFmember.iloc[:,0]).any():
         if debug:
             print('Assuming WRF ensemble member, but not all model strings match '+wregex)
             print(df)
         pdb.set_trace()
-    ens = WRFmember[0][0]
+    ens = WRFmember.iloc[0,0]
     #ens = int(ens) # strip leading zero
     for index, row in df.iterrows():
+        if 'origmeshTrue' in row.userdata1:
+            print("wait. row",index,"already has original mesh values. Skipping.")
+            continue
         gridfile = "EPS_"+str(ens)+"/E"+str(ens)+"_"+row.initial_time.strftime('%m%d%H') + \
             "_"+grid+"_"+ row.valid_time.strftime('%Y-%m-%d_%H:%M:%S') +"_ll.nc"
         if debug:
