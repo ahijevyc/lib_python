@@ -1,8 +1,42 @@
-from shapely.geometry import Point
+from shapely.geometry import Point, multipolygon
 import datetime
 import pandas as pd
 import cartopy
 import pdb
+import matplotlib.path
+import numpy as np
+
+def pts_in_shp(lats, lons, shp, debug=False):
+    shape = cartopy.io.shapereader.Reader(shp)
+    ll_array = np.hstack((lons.flatten()[:,np.newaxis],lats.flatten()[:,np.newaxis]))
+    mask = np.full(lats.flatten().shape, False)
+    # How to make shapefile for EAST_CONUS (CONUS east of 105W)
+    # import shapefile
+    # import geopandas
+    # from shapely.geometry import Polygon
+    # shape = geopandas.read_file("./CONUS/CONUS.shp")
+    # bbox = Polygon([(-105,65),(-50,65),(-50,10),(-105,10)])
+    # shape = shape.intersection(bbox)
+    # shape.to_file("EAST_CONUS")
+    # It is as simple as that.
+
+    # This seems kind of hacky. Can you recurse through a mixture of Polygons and Multipolygons more elegantly?
+    for g in shape.geometries():
+        # How to deal with 3-D polygons (i.e. POLYGON Z)? some shape files are 3D.
+        if g.has_z:
+            print("Uh oh. shape geometries have z-coordinate in",shp)
+            print("I don't know how to process 3-D polygons (i.e. POLYGON Z).")
+            sys.exit(1)
+        if isinstance(g, multipolygon.MultiPolygon):
+            for mp in g:
+                mask = mask | matplotlib.path.Path(mp.exterior.coords).contains_points(ll_array)
+        else:
+            mask = mask | matplotlib.path.Path(g.exterior.coords).contains_points(ll_array)
+        if debug:
+            print("pts_in_shp:", mask.sum(), "points")
+    return np.reshape(mask, lats.shape)
+
+
 
 # used by read_st4.py and wrf_st4_stats.py
 def clean(df, shapefile, interval, debug=False):
@@ -47,7 +81,7 @@ def clean(df, shapefile, interval, debug=False):
         if any([g.contains(Point(p)) for g in shape]):
             for dt in dts:
                 dt = datetime.datetime(*dt) # unpack tuple or get TypeError: an integer is required
-                if df.index.contains(dt):
+                if dt in df.index:
                     if debug: print("st4.clean() dropping", dt, 'cause', p, 'artifact')
                     df = df.drop(index=dt)
                 else:
