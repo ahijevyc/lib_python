@@ -18,7 +18,7 @@ import scipy.ndimage as ndimage
 
 
 def RogerEdwards(rename=True):
-    ifile = "/glade/u/home/ahijevyc/TCTor95-18.xls - Full List.csv"
+    ifile = "/glade/work/ahijevyc/share/SPC/TCTor95-18.xls - Full List.csv"
     REdf = pd.read_csv(ifile, delimiter=',', parse_dates=[["Year","UTC-Mo.","UTC-Date","UTC time"]], 
             index_col=0, skiprows=1, header=[0], nrows=1506) # skipfooter=23)
     # skipfooter=23 could be used, but 'c' engine doesn't handle it. 'c' engine is faster than 'python' engine.
@@ -49,15 +49,17 @@ def RogerEdwards(rename=True):
 
 
 def spc_event_filename(event_type):
-    filename = '/glade/work/ahijevyc/share/SPC/'+event_type+'/'
-    if event_type=='torn':
-        # Update nominal last time when you update the filename.
-        nominal_last_time = datetime.datetime(2019,1,1,0,0,0,0,pytz.UTC) 
-        filename = "/glade/work/ahijevyc/share/SPC/1950-2018_actual_tornadoes.csv"
-        return filename, nominal_last_time
-    filename += "1955-2018_"+event_type+".csv"
+    assert event_type in ["wind","hail","torn"]
+
+    idir = '/glade/work/ahijevyc/share/SPC/'
+    # Update nominal last time when you update the filename.
     nominal_last_time = datetime.datetime(2019,1,1,0,0,0,0,pytz.UTC) 
+    if event_type=='torn':
+        filename = idir + "1950-2018_actual_tornadoes.csv"
+    else:
+        filename = idir + "1955-2018_"+event_type+".csv"
     return filename, nominal_last_time
+
 
 def fix_severe_wx_report_variable_names(stat):
     # Replace unhelpful substrings in forecast variable name.
