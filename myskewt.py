@@ -1,7 +1,5 @@
 import sys
 import pdb
-#sys.path.append('/glade/u/home/ahijevyc/lib/python2.7/site-packages/SHARPpy-1.3.0-py2.7.egg')
-#sys.path.append('/glade/u/home/ahijevyc/lib/python2.7/site-packages')
 import sharppy
 import sharppy.sharptab.interp as interp
 import sharppy.sharptab.params as params
@@ -121,26 +119,32 @@ def draw_background(ax, dry=np.arange(-50,110,20), moist=np.arange(-5,40,5), pre
     ax.grid(True, linestyle='solid', alpha=0.5)
 
 
-def draw_hodo():
+def draw_hodo(skewTax, az=-35, debug=False):
     bbox_props = dict(boxstyle="square", color="w", alpha=0.5, lw=0.5)
-    ax = plt.axes([.5,.63,.2,.26])
+    [[x0,y0],[x1,y1]] = skewTax.get_position().get_points()
+    width = 0.32 * (x1-x0)
+    aspect_ratio = (y1-y0)/(x1-x0)
+    height = width*aspect_ratio
+    x0 = x0 + 0.6 * (x1-x0)
+    y0 = y0 + 0.66 * (y1-y0)
+    ax = plt.axes([x0,y0,width,height])
     ax.get_xaxis().set_visible(False)
     ax.get_yaxis().set_visible(False)
-    az = np.radians(-35)
+    az = np.radians(az)
     for i in range(10,100,10):
         # Draw the range rings around the hodograph.
-        lw = .4 if i % 20 == 0 else 0.25
+        lw = .4 if i % 20 == 0 else 0.152
         circle = plt.Circle((0,0),i,color='k', alpha=.3, fill=False, lw=lw)
         ax.add_artist(circle)
         if i % 20 == 0 and i < 100:
             # The minus 2 nudges it a little closer to origin. 
-            plt.text((i-2)*np.cos(az),(i-2)*np.sin(az),str(i)+" kt",rotation=np.degrees(az),size=5,alpha=.4,
+            ax.text(i*np.cos(az),i*np.sin(az)," "+str(i)+"kt",rotation=np.degrees(az),size=5,alpha=.4,
                     ha='center', zorder=1, bbox=bbox_props)
 
     ax.set_xlim(-40,80)
     ax.set_ylim(-60,60)
-    ax.axhline(y=0, color='k')
-    ax.axvline(x=0, color='k')
+    ax.axhline(y=0, lw=0.5, color='k')
+    ax.axvline(x=0, lw=0.5, color='k')
 
     return ax
 
@@ -188,16 +192,25 @@ def wind_barb_spaced(ax, prof, xpos=1.0, yspace=0.04):
     return b, kts
 
 
-def add_globe(longitude, latitude):
-    # TODO: avoid matplotlib depreciation warning about creating a unique id for each axes instance. You need a new axes
-    # instance whenever lat/lon changes.
+def add_globe(globeax, longitude, latitude):
+    # The first time this is called, globeax should be None.
     # Globe with dot on location.
-    mapax = plt.axes([.795, 0.09,.18,.18], projection=cartopy.crs.Orthographic(longitude, latitude))
-    mapax.add_feature(cartopy.feature.OCEAN, zorder=0)
-    mapax.add_feature(cartopy.feature.LAND, zorder=0, linewidth=0) # linewidth=0 or coastlines are fuzzy
-    mapax.set_global()
-    sloc = mapax.plot(longitude, latitude,'o', color='green', markeredgewidth=0, markersize=4., transform=cartopy.crs.Geodetic())
-    return mapax
+    if hasattr(globeax, 'projection'):
+        pp = globeax.projection.proj4_params
+        old_location = (pp["lon_0"], pp["lat_0"])
+        if old_location != (longitude, latitude):
+            # Avoid MatplotlibDepreciationWarning about adding reusing axes with same arguments instead of creating a new one... 
+            globeax.remove()  # Don't use .clear(). clear() won't remove the axes
+        else:
+            return globeax # same location. return axes unchanged.
+    # You need a new axes instance whenever lat/lon changes.
+    print("changing globe to", longitude, latitude)
+    globeax = plt.axes([.795, 0.09,.18,.18], projection=cartopy.crs.Orthographic(longitude, latitude))
+    globeax.add_feature(cartopy.feature.OCEAN, zorder=0)
+    globeax.add_feature(cartopy.feature.LAND, zorder=0, linewidth=0) # linewidth=0 or coastlines are fuzzy
+    globeax.set_global()
+    sloc = globeax.plot(longitude.to("degree").m, latitude.to("degree").m,'o', color='green', markeredgewidth=0, markersize=4., transform=cartopy.crs.Geodetic())
+    return globeax
 
 
 def indices(prof, debug=False):
