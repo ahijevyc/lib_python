@@ -97,6 +97,9 @@ def update_label_visibility(gl, debug=False):
     west, east, south, north = gl.axes.get_extent()
     if debug:
         print("extent=",extent)
+    return
+    # not neccessary anymore. ylabel_artists is not an 
+    # attribute of gridliner object anymore. 
     for label in gl.ylabel_artists:
         x, y = label.get_position()
         if y < south or y > north:
