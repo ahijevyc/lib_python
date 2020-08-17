@@ -1,4 +1,8 @@
+import matplotlib.pyplot as plt
+import math
 import pandas as pd
+import datetime
+import cartopy
 import pdb
 import re
 import csv
@@ -38,28 +42,52 @@ def basins():
         "global": (-180,180,-20,70),
         "track" : None # plot domain is simply the storm track
         }
+    
+    
+def get_ax(projection=cartopy.crs.PlateCarree(), bscale='50m'):
+    ax = plt.axes(projection=projection) 
+    # bscale = countries and ocean the same border scale to match
+    # Create a feature countries from Natural Earth
+    countries = cartopy.feature.NaturalEarthFeature(category='cultural',
+                name='admin_0_countries', scale=bscale,
+                facecolor=cartopy.feature.COLORS['land'])
+
+    ocean = cartopy.feature.NaturalEarthFeature(category='physical',
+            name='ocean', scale=bscale, edgecolor='face',
+            facecolor=cartopy.feature.COLORS['water'])
+
+    ax.add_feature(ocean) 
+    ax.add_feature(countries, edgecolor='gray', lw=0.375)
+    ax.add_feature(cartopy.feature.LAKES)
+    ax.add_feature(cartopy.feature.STATES, lw=0.25, edgecolor='gray')
+    return ax
 
 def kts2category(kts):
-   category = "TD"
-   if kts > 34:
-      category = "TS"
-   if kts > 64:
-      category = "CAT1"
-   if kts > 83:
-      category = "CAT2"
-   if kts > 96:
-      category = "CAT3"
-   if kts > 113:
-      category = "CAT4"
-   if kts > 137:
-      category = "CAT5"
+    category = "TD"
+    if kts > 34:
+        category = "TS"
+    if kts > 64:
+        category = "CAT1"
+    if kts > 83:
+        category = "CAT2"
+    if kts > 96:
+        category = "CAT3"
+    if kts > 113:
+        category = "CAT4"
+    if kts > 137:
+        category = "CAT5"
 
-   return category, colors[category]
+    return category, colors[category]
 
 
 ifile = '/glade/work/ahijevyc/work/atcf/Irma.ECMWF.dat'
 ifile = '/glade/scratch/mpasrt/uni/2018071700/latlon_0.500deg_0.25km/gfdl_tracker/tcgen/fort.64'
 
+def vmax_HollandB_to_minp(vmax_kts, HollandB, environmental_pressure_hPa = 1010, density_of_air = 1.15*units["kg/m^3"], debug=False):
+    vmax = vmax_kts * units["knots"].to("m/s")
+    environmental_pressure = environmental_pressure_hPa* units["hPa"].to("Pa")
+    minp = environmental_pressure - (vmax**2 * density_of_air * math.e / HollandB)
+    return np.around(minp / 100.)
 
 def archive_path(atcfname):
     assert atcfname[0:1] in ['a', 'b']
@@ -87,8 +115,17 @@ def speed_heading(lon, lat, time):
     speed = np.zeros_like(lon)
     heading = np.zeros_like(lon)
 
+    # Allow lists
+    # convert to pandas Series so we can apply the diff() method
+    lon = pd.Series(lon)
+    lat = pd.Series(lat)
+    time = pd.Series(time)
+
+    # 
     for i, (lon1, dlon, lat1, dlat, dt) in enumerate(zip(lon, lon.diff(),lat, lat.diff(), time.diff())):
-        if np.isnan(dlon):
+        if dt < datetime.timedelta(seconds=0): # deal with times at beginning of track
+            dt = datetime.timedelta(seconds=0)
+        if pd.isnull(dlon) or pd.isnull(dt):
             continue
         d_km, head = dist_bearing(lon1-dlon,lat1-dlat,np.array(lon1),np.array(lat1))
         heading[i] = head
@@ -97,6 +134,7 @@ def speed_heading(lon, lat, time):
         speed[i] = np.nan
         if dt != 0: # avoid RuntimeWarning: invalid value encountered in double_scalars /divide by zero encountered in double_scalars
             speed[i] = (d_km/dt).to("knots").m # return speed in knots
+
     return speed, heading
 
 
@@ -162,6 +200,60 @@ def mean_track(df):
     df["model"] = "MEAN"
     return df
 
+def plot_track(start_label,group,end_label, scale=1, debug=False, textcolor="black", label_interval_hours=1, **kwargs):
+    if debug:
+        print("plot_track: "+start_label)
+        print(group)
+    group = group.sort_values("valid_time")
+
+    if plt.gca().projection.proj4_params["lon_0"] == 180:
+        if debug:
+            print("plot_track(): changing longitudes from -180,180 to 0,360")
+        group.loc[group.lon<0,"lon"] += 360
+
+
+    # change textcolor to white for Blue Marble background
+
+    for i in range(0, len(group)):
+        row = group.iloc[i]
+        if i == 0:
+            # first half-segment
+            row_1 = group.iloc[i]
+            if len(group) == 1: # track is 1-point-long
+                row1 = group.iloc[i]
+            else:
+                row1 = group.iloc[i+1]
+            plt.text(row.lon,row.lat, start_label, color=textcolor, 
+                    ha='center', va='baseline', fontsize=7*scale, transform=cartopy.crs.PlateCarree())
+        elif i == len(group)-1:
+            # last half-segment
+            row_1 = group.iloc[i-1]
+            row1 = group.iloc[i]
+            plt.text(row.lon, row.lat, end_label, color=textcolor, 
+                    ha='center', va='baseline', fontsize=7*scale, transform=cartopy.crs.PlateCarree())
+        else:
+            # middle segments
+            row_1 = group.iloc[i-1]
+            row1 = group.iloc[i+1]
+        lat0 = (row_1.lat + row.lat) / 2.
+        lon0 = (row_1.lon + row.lon) / 2.
+        lw = 2.5 if row.vmax > 34 else 1
+        TCcategory, color = kts2category(row.vmax)
+        lat1 = (row.lat + row1.lat) / 2.
+        lon1 = (row.lon + row1.lon) / 2.
+        if TCcategory == "TD" and row1.basin == 'TG':
+            # IF this is TC genesis track and not a storm with TC vitals
+            # use "OTHER (NON TD)" instead of "CLASSIFIED TD" color
+            color = "white"
+        if debug: print(i, "plot segment", [lon0,lon1],[lat0,lat1])
+        segment = plt.plot([lon0,row.lon,lon1],[lat0,row.lat,lat1], # Include middle point. Full segment is a bent line.
+                c=color, lw=lw*scale, transform=cartopy.crs.PlateCarree())
+        if row.valid_time.hour % label_interval_hours == 0: # label if hour is multiple of label_interval_hours
+            plt.text(row.lon, row.lat, row.valid_time.strftime("%HZ"), color=textcolor,
+                ha='center',va='top',fontsize=6*scale, transform=cartopy.crs.PlateCarree())
+        plt.plot(row.lon, row.lat, 'o', markersize=scale*2, markerfacecolor="white", color=color, transform=cartopy.crs.PlateCarree())
+
+
 def interpolate(df, interval, debug=False):
 
     if interval not in ['1H','3H','6H','12H','24H']:
@@ -180,6 +272,11 @@ def interpolate(df, interval, debug=False):
             print("Dropping",nbad,"wind radii line(s) with NaN valid_time")
         df.dropna(how='all', subset=['valid_time'], inplace=True)
 
+    # Can we distinguish 34, 50 and 64-kt lines but treat 0kt and 34kt as the same?
+    # Create dummy column "myrad" to do this. When grouping by myrad it keeps 0 and 34-kt lines together.
+    df["myrad"] = df["rad"]
+    df.loc[df["rad"].astype(int) == 0,"myrad"] = "34"
+
 
     df2 = pd.DataFrame()
 
@@ -188,7 +285,6 @@ def interpolate(df, interval, debug=False):
     othrtrack = df[df.model != 'BEST']
 
     # Interpolate in time
-
 
     if not besttrack.empty:
         # Used to group by rad before interpolating, but when available rads change with time,
@@ -208,123 +304,229 @@ def interpolate(df, interval, debug=False):
             x["initial_time"] = x["valid_time"]
             # redo heading because of circular values get messed up in interpolation
             if debug:
-                print("atcf.interpolate(): redo best track headings")
+                print("atcf.interpolate(): redo best track speed and heading")
             speed, heading = speed_heading(x.lon, x.lat, x.valid_time)
-            x.loc[:,"heading"] = heading
+            x.loc[1:,"heading"] = heading[1:] # skip first element; it is always missing coming out of speed_heading()
             df2 = df2.append(x)
 
     # handle multiple models, init_times, etc.
     if not othrtrack.empty:
-        for index, group in othr.groupby(['basin', 'cy', 'initial_time', 'model', 'rad']):
+        for index, group in othrtrack.groupby(['basin', 'cy', 'initial_time', 'model', 'myrad']):
             # Used to say drop=False in set_index() method. but I want the interpolate() method to affect the valid_time
             # and for those interpolated times to be a column again by applying reset_index() method.
             if debug:
                 pdb.set_trace()
+            # TODO: expand all 0, 34, 50 and 64 knot lines so missing ones are properly treated as zero wind radii when interpolating.
+            #x = return_expandedwindradii(group)
+
             x = group.set_index('valid_time').resample(interval).interpolate(method='time').reset_index()
-            # TODO: do I need to fix initial_time column like I did for besttrack above? No. 
+            # TODO: do I need to fix initial_time column like I did for besttrack above? Yes, to avoid write afcf ValueError: Unknown format code 's' for object of type 'float'
             # initial_time is in the index of this group dataframe.
             # perhaps look at github.com/pandas-dev/issues/11701 for future hints.
             # redo heading because of circular values get messed up in interpolation
+            if debug: print("atcf.interpolate(): padding",index,"and resetting index")
+            x = x.fillna(method='pad').reset_index()
             if debug:
-                print("atcf.interpolate(): redo model track headings")
+                print("atcf.interpolate(): redo model track circular heading")
             speed, heading = speed_heading(x.lon, x.lat, x.valid_time)
-            x.loc[:,"heading"] = heading
+            x.loc[1:,"heading"] = heading[1:] # skip first element; it is always missing coming out of speed_heading()
             x = x.dropna(how='all', subset=['initial_time']) # I think this cleans up undefined extrapolated times
             df2 = df2.append(x)
 
+    df2.drop(columns="myrad", inplace=True)
     df2.sort_values(by=['basin','cy','initial_time','model','valid_time','rad'], inplace=True)
     return df2
 
+def stringlatlon2float(df, debug=False):
+    # Extract last character of lat and lon columns
+    # Multiply integer by -1 if "S" or "W"
+    # Divide by 10
+    S = df.lat.str[-1] == 'S'
+    lat = df.lat.str[:-1].astype(float) / 10.
+    lat[S] = lat[S] * -1
+    df.lat = lat
+    W = df.lon.str[-1] == 'W'
+    lon = df.lon.str[:-1].astype(float) / 10.
+    lon[W] = lon[W] * -1
+    df.lon = lon
+
+    if debug:
+        print("finished converting string lat/lons to float")
+        pdb.set_trace()
+    return df
 
 
 
+def return_expandedwindradii(df):
+    # Set append=True to avoid losing columns when you make them an index
+    df = df.set_index(['basin','cy','initial_time','model','fhr','rad'])
+    df.index.set_levels(['0','34','50','64'], inplace=True, level='rad') # make sure full set of thresholds is defined. original dataframe may not have them all.
+    mi = pd.MultiIndex.from_product(df.index.levels,names=df.index.names) # create MultiIndex with no missing rads.
+    # TODO: Correctly use fill method option when applying reindex method.
+    #       For example, with method='pad', it wrongly propagates forward previous time's values 
+    #       for 0-knot line (because 0-knot line didn't exist). Tried method='nearest' but
+    #       NotImplementedError: method='nearest' not implemented yet for MultiIndex; see GitHub issue 9365.
+    df = df.reindex(mi) # now there is a 0,34,50, and 64-knot line for each entry.
+    df = df.reset_index()  # and all the indexes are moved back to columns
+    df.loc[:,["rad1","rad2","rad3","rad4"]] = df[["rad1","rad2","rad3","rad4"]].fillna(value=0) # Make missing wind radii zero.
+    # Tried leaving as MultiIndex DataFrame but it led to all sorts of problems.
+    return df
+
+converters = {
+        "basin" : lambda x: x.upper(), # official is capitalized
+        # The problem with CY is ATCF only reserves 2 characters for it.
+        "cy" : lambda x: x.strip(), # cy is not always an integer (e.g. 10E) 
+        "initial_time" : lambda x: pd.to_datetime(x.strip(),format='%Y%m%d%H'),
+        #"vmax": float,
+        #"minp": float,
+        "ty": str, # why was this not in here for so long?
+        "rad" : lambda x: x.strip(), # not a continuous value; it is a category. Important for interpolating in time.
+        "windcode" : lambda x: x[-3:],
+        "subregion": lambda x: x[-2:],
+         # subregion ends up being 3 characters when written with .to_string
+         # strange subregion only needs one character, but official a-decks leave 3. 
+        "initials" : lambda x: x[-3:],
+        'stormname': lambda x: x[-9:],
+        'depth'    : lambda x: x[-1:],
+        "seascode" : lambda x: x[-3:],
+        "userdefine1": str,
+        "userdata1"  : str,
+        "userdefine2": str,
+        "userdata2"  : str,
+        "userdefine3": str,
+        "userdata3"  : str,
+        "userdefine4": str,
+        "userdata4"  : str,
+        }
+
+dtype = {
+        'technum'  : float, #Tried int, but int can't be nan. 
+        "pouter"   : float,
+        "rad1"     : float,
+        "rad2"     : float,
+        "rad3"     : float,
+        "rad4"     : float,
+        "router"   : float,
+        'rmw'      : float,
+        'gusts'    : float,
+        'eye'      : float,
+        'maxseas'  : float,
+        "seas1"    : float,
+        "seas2"    : float,
+        "seas3"    : float,
+        "seas4"    : float,
+        'heading'  : float,
+        'speed'    : float,
+        "seas"     : float,
+        } 
+
+# Tried using converter for these columns, but couldn't convert 4-space string to float.
+# If you add a key na_values, also add it to dtype dict, and remove it from converters.
+na_values = {
+        "technum"  : 3*' ',
+        "rad1"     : 4*' ',
+        "rad2"     : 4*' ',
+        "rad3"     : 4*' ',
+        "rad4"     : 4*' ',
+        "pouter"   : 4*' ',
+        "router"   : 4*' ',
+        "rmw"      : 4*' ',
+        "gusts"    : 4*' ',
+        "eye"      : 4*' ',
+        "maxseas"  : 4*' ',
+        "heading"  : 4*' ',
+        "speed"    : 4*' ',
+        "seas"     : 3*' ', # one less than other columns
+        "seas1"    : 4*' ',
+        "seas2"    : 4*' ',
+        "seas3"    : 4*' ',
+        "seas4"    : 4*' ',
+        "seas4"    : 4*' ',
+        "HollandB" : 'Infinity',
+        "B1"       : 'Infinity',
+        "B2"       : 'Infinity',
+        "B3"       : 'Infinity',
+        "B4"       : 'Infinity',
+        }
+
+# Standard ATCF columns (doesn't include track id, like in fort.66).
+# https://www.nrlmry.navy.mil/atcf_web/docs/database/new/abrdeck.html
+# Updated format https://www.nrlmry.navy.mil/atcf_web/docs/database/new/abdeck.txt 
+atcfcolumns=["basin","cy","initial_time","technum","model","fhr","lat","lon","vmax","minp","ty",
+    "rad", "windcode", "rad1", "rad2", "rad3", "rad4", "pouter", "router", "rmw", "gusts", "eye",
+    "subregion", "maxseas", "initials", "heading", "speed", "stormname", "depth", "seas", "seascode",
+    "seas1", "seas2", "seas3", "seas4", "userdefine1", "userdata1", "userdefine2", "userdata2",
+    "userdefine3", "userdata3", "userdefine4", "userdata4"]
+
+
+def add_missing_dummy_columns(df, columns, debug=False):
+    for col in columns:
+        if col not in df.columns:
+            if debug:
+                print(col, 'not in DataFrame. Fill with appropriate value.')
+            # if column doesn't exist make it zeroes
+            if col in ['rad1', 'rad2', 'rad3', 'rad4','pouter', 'router', 'seas', 'seas1','seas2','seas3','seas4']:
+                df[col] = 0.
+
+            # if rad column doesn't exist make it string zero.
+            if col in ['rad']:
+                df[col] = '0'
+
+            # Initialize other default values.
+            if col in ['windcode', 'seascode']:
+                df[col] = '   '
+
+            # Numbers are NaN
+            if col in ['rmw','gusts','eye','maxseas','heading','speed']:
+                df[col] = np.NaN
+
+            # Strings are empty
+            if col in ['subregion','stormname','userdefine1','userdata1','userdefine2','userdata2','userdefine3','userdata3','userdefine4','userdata4']:
+                df[col] = ''
+
+            if col in ['ty']:
+                df[col] = 'XX'
+
+            if col in ['initials', 'depth']:
+                df[col] = 'X'
+    return df        
+
+def read_aswip(ifile = ifile, debug=False):
+    # Read data into Pandas Dataframe
+    if debug:
+        print('Reading', ifile)
+
+    # https://adcirc.org/home/documentation/users-manual-v50/input-file-descriptions/single-file-meteorological-forcing-input-fort-22/
+    #           1     2         3            4        5      6     7     8     9     10     11
+    names=["basin","cy","initial_time","technum","model","fhr","lat","lon","vmax","minp","ty",
+    #     12      13         14      15       16     17       18        19       20     21       22
+        "rad", "windcode", "rad1", "rad2", "rad3", "rad4", "pouter", "router", "rmw", "gusts", "eye",
+    #       23          24          25         26         27        28      
+        "subregion", "maxseas", "initials", "heading", "speed", "stormname",
+    #           29                30         31      32      33      34      35       36       37       38       39
+        "time_record_number", "nisotachs", "use1", "use2", "use3", "use4", "rmax1", "rmax2", "rmax3", "rmax4", "HollandB",
+    #    40    41    42    43     44       45       46       47  
+        "B1", "B2", "B3", "B4", "vmax1", "vmax2", "vmax3", "vmax4"]
+
+    df = pd.read_csv(ifile,index_col=None,header=None, delimiter=",", names=names, converters=converters, verbose=True, #verbose means Indicate number of NA values placed in non-numeric columns 
+        na_values=na_values, dtype=dtype, skipinitialspace=True, engine='c') # engine='c' is faster than engine="python"
+
+    # convert string lat lon column to float. So we can write atcf file. valid_time not needed by write() method..
+    df = stringlatlon2float(df)
+
+    # Add missing ATCF columns with dummy data.
+    df = add_missing_dummy_columns(df, atcfcolumns)
+
+    return df
 
 def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
     # Read data into Pandas Dataframe
     if debug:
         print('Reading', ifile, 'fullcircle=', fullcircle, 'expandwindradii=', expandwindradii)
 
-    # Standard ATCF columns (doesn't include track id, like in fort.66).
-    # https://www.nrlmry.navy.mil/atcf_web/docs/database/new/abrdeck.html
-    # Updated format https://www.nrlmry.navy.mil/atcf_web/docs/database/new/abdeck.txt 
-    atcfcolumns=["basin","cy","initial_time","technum","model","fhr","lat","lon","vmax","minp","ty",
-        "rad", "windcode", "rad1", "rad2", "rad3", "rad4", "pouter", "router", "rmw", "gusts", "eye",
-        "subregion", "maxseas", "initials", "heading", "speed", "stormname", "depth", "seas", "seascode",
-        "seas1", "seas2", "seas3", "seas4", "userdefine1", "userdata1", "userdefine2", "userdata2",
-        "userdefine3", "userdata3", "userdefine4", "userdata4"]
-
 
 
     names = list(atcfcolumns) # make a copy of list, not a copy of the reference to the list.
-    converters={
-            # The problem with CY is ATCF only reserves 2 characters for it.
-            "cy" : lambda x: x.strip(), # cy is not always an integer (e.g. 10E) 
-            "initial_time" : lambda x: pd.to_datetime(x.strip(),format='%Y%m%d%H'),
-            #"vmax": float,
-            #"minp": float,
-            "ty": str, # why was this not in here for so long?
-            "rad" : lambda x: x.strip(), # not a continuous value; it is a category. Important for interpolating in time.
-            "windcode" : lambda x: x[-3:],
-            "subregion": lambda x: x[-2:],
-             # subregion ends up being 3 characters when written with .to_string
-             # strange subregion only needs one character, but official a-decks leave 3. 
-            "initials" : lambda x: x[-3:],
-            'stormname': lambda x: x[-9:],
-            'depth'    : lambda x: x[-1:],
-            "seascode" : lambda x: x[-3:],
-            "userdefine1": str,
-            "userdata1"  : str,
-            "userdefine2": str,
-            "userdata2"  : str,
-            "userdefine3": str,
-            "userdata3"  : str,
-            "userdefine4": str,
-            "userdata4"  : str,
-        }
-    dtype={
-            'technum'  : float, #Tried int, but int can't be nan. 
-            "pouter"   : float,
-            "rad1"     : float,
-            "rad2"     : float,
-            "rad3"     : float,
-            "rad4"     : float,
-            "router"   : float,
-            'rmw'      : float,
-            'gusts'    : float,
-            'eye'      : float,
-            'maxseas'  : float,
-            "seas1"    : float,
-            "seas2"    : float,
-            "seas3"    : float,
-            "seas4"    : float,
-            'heading'  : float,
-            'speed'    : float,
-            "seas"     : float,
-           } 
-
-    # Tried using converter for these columns, but couldn't convert 4-space string to float.
-    # If you add a key na_values, also add it to dtype dict, and remove it from converters.
-    na_values = {
-            "technum"  : 3*' ',
-            "rad1"     : 4*' ',
-            "rad2"     : 4*' ',
-            "rad3"     : 4*' ',
-            "rad4"     : 4*' ',
-            "pouter"   : 4*' ',
-            "router"   : 4*' ',
-            "rmw"      : 4*' ',
-            "gusts"    : 4*' ',
-            "eye"      : 4*' ',
-            "maxseas"  : 4*' ',
-            "heading"  : 4*' ',
-            "speed"    : 4*' ',
-            "seas"     : 3*' ', # one less than other columns
-            "seas1"    : 4*' ',
-            "seas2"    : 4*' ',
-            "seas3"    : 4*' ',
-            "seas4"    : 4*' ',
-            }
-
 
     reader = csv.reader(open(ifile),delimiter=',')
     testline = next(reader)
@@ -335,6 +537,8 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
     del reader
     with open(ifile) as f:
         max_num_cols = max(len(line.split(',')) for line in f)
+        if debug:
+            print("max number of columns", max_num_cols)
 
     # Output from HWRF vortex tracker, fort.64 and fort.66
     # are mostly ATCF format but have subset of columns
@@ -387,7 +591,7 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
         names.append('id')
 
     if num_cols == 11:
-        print("Assuming simple adeck with 11 columns")
+        print("Assuming", ifile,"is simple adeck with 11 columns")
         if ifile[-4:] != '.dat':
             print("even though file doesn't end in .dat", ifile)
         names = names[0:11]
@@ -417,29 +621,15 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
     if any(badlines):
         df = df[~badlines]
 
-    # Extract last character of lat and lon columns
-    # Multiply integer by -1 if "S" or "W"
-    # Divide by 10
-    S = df.lat.str[-1] == 'S'
-    lat = df.lat.str[:-1].astype(float) / 10.
-    lat[S] = lat[S] * -1
-    df.lat = lat
-    W = df.lon.str[-1] == 'W'
-    lon = df.lon.str[:-1].astype(float) / 10.
-    lon[W] = lon[W] * -1
-    df.lon = lon
 
-    if debug:
-        print("finished converting string lat/lons to float")
-        pdb.set_trace()
-
+    df = stringlatlon2float(df, debug=debug)
 
     if max_num_cols != num_cols and df.model.nunique() > 1:
         print("atcf.read(): test line has", num_cols, "columns, but another line has ", max_num_cols, "columns.")
         print("atcf.read(): may not handle different numbers of columns.")
         print("It's hard to deal with userdefined columns and data in a file with multiple types of models.")
-        #print("Exiting.")
-        #sys.exit(2)
+        print("Exiting.")
+        sys.exit(2)
 
     # Derive valid time.   valid_time = initial_time + fhr
     df['valid_time'] = df.initial_time + pd.to_timedelta(df.fhr, unit='h')
@@ -468,34 +658,9 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
             print("atcf.read(): this should not happen with post-2001 files. Exiting.")
             sys.exit(1)
 
-          
-    for col in atcfcolumns:
-        if col not in df.columns:
-            if debug:
-                print(col, 'not in DataFrame. Fill with appropriate value.')
-            # if column doesn't exist make it zeroes
-            if col in ['rad1', 'rad2', 'rad3', 'rad4','pouter', 'router', 'seas', 'seas1','seas2','seas3','seas4']:
-                df[col] = 0.
+    # Add missing ATCF columns with dummy data.
+    df = add_missing_dummy_columns(df, atcfcolumns)
 
-            # if rad column doesn't exist make it string zero.
-            if col in ['rad']:
-                df[col] = '0'
-
-            # Initialize other default values.
-            if col in ['windcode', 'seascode']:
-                df[col] = '   '
-
-            # Numbers are NaN
-            if col in ['rmw','gusts','eye','maxseas','heading','speed']:
-                df[col] = np.NaN
-
-            # Strings are empty
-            if col in ['subregion','stormname','userdefine1','userdata1']:
-                df[col] = ''
-
-            if col in ['initials', 'depth']:
-                df[col] = 'X'
-            
     if fullcircle:
         if debug:
             print("full circle wind radii")
@@ -508,17 +673,7 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
 
 
     if expandwindradii:
-        # Set append=True to avoid losing columns when you make them an index
-        df = df.set_index(['basin','cy','initial_time','model','fhr','rad'])
-        df.index.set_levels(['0','34','50','64'], inplace=True, level='rad') # make sure full set of thresholds is defined. original dataframe may not have them all.
-        mi = pd.MultiIndex.from_product(df.index.levels,names=df.index.names) # create MultiIndex with no missing rads.
-        # TODO: Correctly use fill method option when applying reindex method.
-        #       For example, with method='pad', it wrongly propagates forward previous time's values 
-        #       for 0-knot line (because 0-knot line didn't exist). Tried method='nearest' but
-        #       NotImplementedError: method='nearest' not implemented yet for MultiIndex; see GitHub issue 9365.
-        df = df.reindex(mi) # now there is a 0,34,50, and 64-knot line for each entry.
-        df = df.reset_index()  # and all the indexes are moved back to columns
-        # Tried leaving as MultiIndex DataFrame but it led to all sorts of problems.
+        df = return_expandedwindradii(df)
 
     fill_speed_heading = all(((df.speed == 0) | pd.isnull(df.speed)) & ((df.heading == 0) | pd.isnull(df.heading))) # assume bad if everything is zero
     if fill_speed_heading:
@@ -700,7 +855,8 @@ def get_ext_of_wind(speed_kts, distance_km, bearing, raw_vmax_kts, quads=quads, 
     return wind_radii_nm
 
 
-def derived_winds(u10, v10, mslp, lonCell, latCell, row, vmax_search_radius=250., mslp_search_radius=100., wind_radii_method="max", debug=False):
+def derived_winds(u10, v10, mslp, lonCell, latCell, row, vmax_search_radius=250., mslp_search_radius=100., 
+        wind_radii_method="max", pouter_search_radius=800, debug=False):
 
     # Given a row (with row.lon and row.lat)...
 
@@ -752,7 +908,14 @@ def derived_winds(u10, v10, mslp, lonCell, latCell, row, vmax_search_radius=250.
     # Get max extent of wind at thresh_kts thresholds.
     wind_radii_nm = get_ext_of_wind(speed_kts, distance_km, bearing, raw_vmax_kts, latCell=latCell, lonCell=lonCell, wind_radii_method=wind_radii_method, debug=debug)
 
-    return raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm
+    # Restrict pressure of last closed isobar and radius of last closed isobar search to a certain radius
+    pouter_rad = distance_km < pouter_search_radius
+    imslp_max = np.argmax(mslp[pouter_rad])
+    raw_pouter_mb =  mslp[pouter_rad][imslp_max] / 100.
+    assert raw_pouter_mb == mslp[pouter_rad].max() / 100.
+    raw_router_nm =  distance_km[pouter_rad][imslp_max] * km2nm
+
+    return raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm, raw_pouter_mb, raw_router_nm
 
 
 def add_wind_rad_lines(row, wind_radii_nm, fullcircle=False, debug=False):
@@ -791,41 +954,55 @@ def add_wind_rad_lines(row, wind_radii_nm, fullcircle=False, debug=False):
     return lines
 
 
-def update_df(df, row, raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm, gridfile=None, debug=False):
+def update_df(df, initial_time, model, fhr, raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm, raw_pouter_mb=None,
+        raw_router_nm=None, gridfile=None, debug=False):
 
-    # TODO: Rewrite function so only row is needed. Why pass entire dataframe df?
     # Called by origgrid and origmesh
+   
+    i = (df["initial_time"] == initial_time) & (df["model"] == model) & (df["fhr"] == fhr)
+    # Make sure is True in only one place
+    assert i.sum() == 1
 
     if debug:
-        print("atcf.update_df(): before update_df\n", row[['valid_time','lon','lat', 'vmax', 'minp', 'rmw']]) 
-    row["vmax"] = raw_vmax_kts
-    row["minp"] = raw_minp
-    row["rmw"]  = raw_RMW_nm
+        print("atcf.update_df(): before update")
+        print(df.loc[i, ['valid_time','lon','lat', 'vmax', 'minp', 'rmw', 'pouter','router']]) 
+    df.loc[i, "vmax"] = raw_vmax_kts
+    df.loc[i, "minp"] = raw_minp
+    df.loc[i, "rmw"]  = raw_RMW_nm
+    if raw_pouter_mb:
+        df.loc[i, "pouter"] = raw_pouter_mb
+    if raw_router_nm:
+        df.loc[i, "router"] = raw_router_nm
+    # stop for debugging if "origmesh" string found in one of the user defined columns
+    for n in ["1", "2", "3", "4"]:
+        for col in ["userdefine"+n, "userdata"+n]:
+            if col in df.columns and 'origmesh' in df.loc[i, col]:
+                print("wait. this row already has original mesh values")
+                pdb.set_trace()
     # Add note of original mesh = True in user data (not defined) column
-    if 'origmeshTrue' in row.userdata1:
-        print("wait. this row already has original mesh values")
-        pdb.set_trace()
-    else:
-        moreuserdata1 = 'origmeshTrue wind_radii_method '+ wind_radii_nm["wind_radii_method"]
-        if gridfile is not None:
-            # Append origmesh file to userdata1 column (after a comma)
-            moreuserdata1 += ', ' + os.path.realpath(gridfile)
-        if debug:
-            print("appending "+moreuserdata1+" to row.userdata1")
-        row.userdata1 += moreuserdata1
+    df.loc[i, "userdefine1"] = 'origmesh wind_radii_method'
+    df.loc[i,"userdata1"]   = wind_radii_nm["wind_radii_method"]
     if debug:
-        print('after', row[['vmax', 'minp', 'rmw']]) 
-
-    # Update df
-    df.loc[row.name,:] = row
+        print("appended original mesh wind radii method to atcf row")
+    if gridfile is not None:
+        # Append origmesh file to userdata1 column (after a comma)
+        df.loc[i,"userdefine2"] = 'originalmeshfile'
+        assert os.path.isfile(os.path.realpath(gridfile))
+        df.loc[i,"userdata2"]   = os.path.realpath(gridfile)
+        if debug:
+            print("appended original mesh filename to atcf row")
+    if debug:
+        print('after')
+        print(df.loc[i, ['vmax', 'minp', 'rmw', 'pouter', 'router']]) 
 
     # Append 34/50/64 knot lines to DataFrame
-    newlines = add_wind_rad_lines(row, wind_radii_nm, debug=debug)
+    # add_wind_rad_lines expects a series, so apply squeeze()
+    newlines = add_wind_rad_lines(df.loc[i,:].squeeze(), wind_radii_nm, debug=debug)
     # If there are new lines, drop the old one and append new ones.
     if not newlines.empty:
         if debug:
-            print("dropping", row.name)
-        df.drop(row.name, inplace=True)
+            print("dropping old row")
+        df = df[~i]
         if debug:
             print("appending ", newlines)
         df = df.append(newlines, sort=False) 
@@ -839,30 +1016,31 @@ def update_df(df, row, raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm, gridfi
 
 
 
-def write(ofile, df, fullcircle=False, debug=False):
+def write(ofile, df, fullcircle=False, append=False, debug=False):
     if df.empty:
         print("afcf.write(): DataFrame is empty.", ofile, "not written")
         return
 
     # TODO: deal with fullcircle.
-    print("writing", ofile)
 
     if debug:
+        print("writing to", ofile)
         print(df.head(0))
         pdb.set_trace()
+
     atcf_lines = ""
     for index, row in df.iterrows():
         atcf_lines += "{:2s}, ".format(row.basin) 
         atcf_lines += "{:2s}, ".format(row.cy.zfill(2))
         atcf_lines += "{:8s}, ".format(row.initial_time.strftime('%Y%m%d%H'))
-        atcf_lines += "{:02.0f}, ".format(row.technum) 
+        atcf_lines += "  , " if np.isnan(row.technum) else "{:02.0f}, ".format(row.technum) # avoid turning 'nan' into 3 spaces below
         atcf_lines += "{}, ".format(row.model)
         atcf_lines += "{:3.0f}, ".format(row.fhr)
         atcf_lines += "{:>4s}, ".format(lat2s(row.lat))
         atcf_lines += "{:>5s}, ".format(lon2s(row.lon))
         atcf_lines += "{:3.0f}, ".format(row.vmax)
         atcf_lines += "{:4.0f}, ".format(row.minp)
-        atcf_lines += "{}, ".format(row.ty)
+        atcf_lines += "{:2s}, ".format(row.ty)
         atcf_lines += "{:>3s}, ".format(row.rad)
         atcf_lines += "{:>3s}, ".format(row.windcode)
         atcf_lines += "{:4.0f}, ".format(row.rad1)
@@ -892,19 +1070,27 @@ def write(ofile, df, fullcircle=False, debug=False):
         # Propagate optional columns
         for col in ["userdefine2", "userdata2", "userdefine3", "userdata3", "userdefine4", "userdata4"]:
             if col in row:
+                if not isinstance(row[col], str):
+                    pdb.set_trace()
                 atcf_lines += "{:s}, ".format(row[col]) 
         atcf_lines += "\n"
 
-    atcf_lines = atcf_lines.replace("nan","   ")
+    atcf_lines = atcf_lines.replace("nan","   ") # TODO: Check above for potential nans and substitute appropriate number of spaces instead of forcing 3 spaces here.
 
     if debug:
         pdb.set_trace()
 
-    f = open(ofile, "w")
+    mode = "w"
+    if append:
+        mode = "a"
+    f = open(ofile, mode)
     f.write(atcf_lines)
 
     f.close()
-    print("wrote", ofile)
+    if append:
+        print("appended to", ofile)
+    else:
+        print("wrote", ofile)
 
 def origgridWRF(df, griddir, grid="d03", wind_radii_method = "max", debug=False):
     # Get vmax, minp, radius of max wind, max radii of wind thresholds from WRF by Alex Kowaleski
@@ -923,11 +1109,11 @@ def origgridWRF(df, griddir, grid="d03", wind_radii_method = "max", debug=False)
         if 'origmeshTrue' in row.userdata1:
             print("wait. row",index,"already has original mesh values. Skipping.")
             continue
-        gridfile = "EPS_"+str(ens)+"/E"+str(ens)+"_"+row.initial_time.strftime('%m%d%H') + \
+        gridfile = griddir + "EPS_"+str(ens)+"/E"+str(ens)+"_"+row.initial_time.strftime('%m%d%H') + \
             "_"+grid+"_"+ row.valid_time.strftime('%Y-%m-%d_%H:%M:%S') +"_ll.nc"
         if debug:
-            print('opening ' + griddir + gridfile)
-        nc = Dataset(griddir + gridfile, "r")
+            print('opening ' + gridfile)
+        nc = Dataset(gridfile, "r")
         lon = nc.variables['lon'][:]
         lat = nc.variables['lat'][:]
         lonCell,latCell = np.meshgrid(lon, lat)
@@ -940,13 +1126,14 @@ def origgridWRF(df, griddir, grid="d03", wind_radii_method = "max", debug=False)
             sys.exit(1)
         mslp = mslpvar[iTime,:,:] * 100.
         if debug:
-            print('closing ' + griddir + gridfile)
+            print('closing ' + gridfile)
         nc.close()
 
         if debug:
             print("Extract vmax, RMW, minp, and radii of wind thresholds from row", row.name)
-        raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm = derived_winds(u10, v10, mslp, lonCell, latCell, row, wind_radii_method=wind_radii_method, debug=debug)
-        df = update_df(df, row, raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm, gridfile=gridfile, debug=debug)
+        raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm, raw_pouter_mb, raw_router_nm = derived_winds(u10, v10, mslp, lonCell, latCell, row, wind_radii_method=wind_radii_method, debug=debug)
+        df = update_df(df, row, raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm, raw_pouter_mb=raw_pouter_mb,
+                raw_routernm=raw_router_nm, gridfile=gridfile, debug=debug)
 
     # Sort DataFrame by index (deal with appended wind radii lines)
     # sort by rad too
@@ -978,9 +1165,9 @@ def origgrid(df, griddir, ensemble_prefix="ens_", wind_radii_method="max", debug
     elif isinstance(ensemble_prefix, (list, tuple)):
         ensemble_prefixes = ensemble_prefix
 
-    # TODO: Why group rows by initial_time and model? Why not process each row independently?
-    for run_id, group in df.groupby(['initial_time', 'model']):
-        initial_time, model = run_id
+    # Group by initial_time and model because each group corresponds to a different input file.
+    # If you process each row independently, you have to open and close the same input file for each foreacst hour.
+    for (initial_time, model), group in df.groupby(['initial_time', 'model']):
         m = re.search(r'EE(\d\d)', model)
         if not m:
             if debug:
@@ -1006,6 +1193,7 @@ def origgrid(df, griddir, ensemble_prefix="ens_", wind_radii_method="max", debug
             # List in order of most preferred to least preferred.
             potential_gridfiles.extend([
                                    ensemble_prefix+str(ens)+"/SFC_"+yyyymmdd_hhmm+".nc", # Linus-style
+                                   ensemble_prefix+str(ens)+"/"+ "0p125"+yyyymmddhh+"."+str(ens)+".nc",
                                    ensemble_prefix+str(ens)+"/"+ "0p15"+yyyymmddhh+"."+str(ens)+".nc",
                                    ensemble_prefix+str(ens)+"/"+ "0p25"+yyyymmddhh+"."+str(ens)+".nc",
                                    ensemble_prefix+str(ens)+"/"+ "0p5"+yyyymmddhh+"."+str(ens)+".nc",
@@ -1013,12 +1201,14 @@ def origgrid(df, griddir, ensemble_prefix="ens_", wind_radii_method="max", debug
                                    ])
         for gridfile in potential_gridfiles:
             if os.path.isfile(griddir + gridfile):
+                gridfile = griddir + gridfile # gridfile now has full path. Important for saving in atcf file. Or else os.path.realpath might use current directory.
                 break
             else:
-                print("no", griddir + gridfile)
+                if debug:
+                    print("no", griddir + gridfile)
 
         print('opening', gridfile)
-        nc = Dataset(griddir + gridfile, "r")
+        nc = Dataset(gridfile, "r")
         lon = nc.variables[get_var_with_str(nc, 'lon_')][:]
         lat = nc.variables[get_var_with_str(nc, 'lat_')][:]
         lonCell,latCell = np.meshgrid(lon, lat)
@@ -1027,20 +1217,23 @@ def origgrid(df, griddir, ensemble_prefix="ens_", wind_radii_method="max", debug
         mslps = nc.variables[get_var_with_str(nc, 'msl')][:]
         model_forecast_times = nc.variables['forecast_time0'][:]
         nc.close()
-        for index, row in group.iterrows():
-            if not any(model_forecast_times == row.fhr):
-                print(row.fhr, 'not in model file')
+
+
+        for fhr, row in group.groupby(["fhr"]):
+            if not any(model_forecast_times == fhr):
+                print('forecast hour', fhr, 'not in model file')
                 continue
-            itime = np.argmax(model_forecast_times == row.fhr)
+            itime = np.argmax(model_forecast_times == fhr)
             u10  =  u10s[itime,:,:]
             v10  =  v10s[itime,:,:]
             mslp = mslps[itime,:,:]
 
             # Extract vmax, RMW, minp, and radii of wind thresholds
-            raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm = derived_winds(u10, v10, mslp, lonCell, latCell, row, wind_radii_method=wind_radii_method, debug=debug)
+            #row = row.squeeze() # Convert 1-row DataFrame to Series. Do this in function call, so row isn't really changed after function is completed.
+            raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm, raw_pouter_mb, raw_router_nm = derived_winds(u10, v10, mslp, lonCell, latCell, row.squeeze(), wind_radii_method=wind_radii_method, debug=debug)
 
-
-            df = update_df(df, row, raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm, gridfile=gridfile, debug=debug)
+            df = update_df(df, initial_time, model, fhr, raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm, raw_pouter_mb=raw_pouter_mb,
+                    raw_router_nm=raw_router_nm, gridfile=gridfile, debug=debug)
 
     return df
 
