@@ -1,6 +1,12 @@
+from datetime import datetime, timedelta
+import argparse
+import matplotlib
+matplotlib.use("TkAgg")
+import matplotlib.pyplot as plt
 import pandas as pd
 import pdb
 import re
+import atcf
 import os
 import numpy as np
 from metpy import units
@@ -184,7 +190,9 @@ def get_atcf(stormname, year, version="04r00", basin="", debug=False):
 
 def get_stormname_from_atcfname(atcf_filename, version="04r00_20200308", debug=False):
     bname = os.path.basename(atcf_filename)
-    assert bname[0:1] == "b"
+    if bname.startswith("a"): # allow for adeck, but change name to start with "b" so the string may be found in IBTrACS file.
+        bname = "b" + bname[1:]
+    assert bname.startswith("b")
     assert bname[-4:] == ".dat"
     bname = bname[:-4]
     bname = bname+"\[atcf\]"
@@ -204,3 +212,55 @@ def get_stormname_from_atcfname(atcf_filename, version="04r00_20200308", debug=F
     if not stormname:
         print("ibtracs.get_stormname_from_atcfname(): no",bname,"in",ifile)
         sys.exit(1)
+
+def extension(stormname, season):
+    # capitalize stormnames in extension dictionary
+    inkey = (stormname.upper(), int(season))
+    # TODO: Grab last time, lat, lon from ibtracs, not hard coded values.
+    # Need last entry from ibtracs to get speed and heading for all new members. speed_heading() needs position before.
+    x = {("ISAAC",2012): # first element is last position from ibtracs, then tracked manually in 700mb wind in NARR
+            {"valid_time": [datetime(2012,9,1,6), datetime(2012,9,1,12), datetime(2012,9,1,15), datetime(2012,9,1,18), datetime(2012,9,1,21),
+                                                  datetime(2012,9,2, 0), datetime(2012,9,2, 3), datetime(2012,9,2, 6), datetime(2012,9,2, 9)],
+             "lat"     : [ 38.4,  38.5,  38.7,  38.7,  38.6,  39.1,  38.7,  38.5,  38.9],
+             "lon"     : [-93.3, -93.6, -93.1, -93.0, -92.0, -91.7, -90.9, -90.6, -89.7],
+            }
+        }
+
+    if inkey in x:
+        x[inkey]["stormname"] = stormname.upper()
+        x[inkey]["SEASON"] = season
+        speed, heading = atcf.speed_heading(x[inkey]["lon"], x[inkey]["lat"], x[inkey]["valid_time"])
+        x[inkey]["speed"], x[inkey]["heading"] = speed, heading
+        # throw away first element -- it was only needed to get speed and heading for 1st element of extension
+        for c in ["valid_time", "lat", "lon", "speed", "heading"]:
+            x[inkey][c] = x[inkey][c][1:]
+        x[inkey]["rad"] = 0. # needed for check later where lines with rad > 35 are dropped.
+        x = x[inkey]
+    else:
+        x = None
+
+    return pd.DataFrame(x)
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("stormname", help="storm name")
+    parser.add_argument("season", help="season (year)")
+    parser.add_argument("-b", "--basin", type=str, default="al", help="basin")
+    parser.add_argument("-o", "--out", default=".", help="Output path")
+    args = parser.parse_args()
+    stormname = args.stormname
+    season = args.season
+    ax = atcf.get_ax()
+    track_df, ifile = get_atcf(stormname, season, basin=args.basin)
+    start_label=""
+    end_label=""
+    atcf.plot_track(start_label, track_df, end_label)
+    ofile = os.path.join(args.out, stormname+season+".png")
+    if (os.path.exists(ofile)):
+        print("found",ofile," Exiting")
+    else:
+        plt.savefig(ofile)
+        print("created ",ofile)
+
+if __name__ == "__main__":
+    main()
