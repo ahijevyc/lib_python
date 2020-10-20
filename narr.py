@@ -90,6 +90,7 @@ fieldinfo['lcl']['vertical'] = 2
 fieldinfo['lh']  = {'levels' : list(range(-700,150,50)), 'cmap':readNCLcm('MPL_BrBG')[127:30:-1], 'fname'  : ['LHTFL_221_SFC'], 'filename':narrSfc}
 fieldinfo['mslp']['fname'] = ['PRMSL_221_MSL']
 fieldinfo['mslp']['filename'] = narrFlx
+fieldinfo['mslp']['levels'] = np.arange(956,1028,4)
 fieldinfo['mslp']['units'] = 'hPa'
 fieldinfo['mslet'] = fieldinfo['mslp'].copy()
 fieldinfo['mslet'] = ['MSLET_221_MSL']
