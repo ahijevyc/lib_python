@@ -1,5 +1,7 @@
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 import math
+from scipy.stats import circmean # for averaging longitudes
 import pandas as pd
 import datetime
 import cartopy
@@ -28,6 +30,8 @@ colors = {"NONTD": colors[0],
         "CAT4": colors[6],
         "CAT5": colors[7]
         }
+idl_water_color = np.array([235.,234.,242.])/255.
+
 
 def basins():
     return {
@@ -54,11 +58,11 @@ def get_ax(projection=cartopy.crs.PlateCarree(), bscale='50m'):
 
     ocean = cartopy.feature.NaturalEarthFeature(category='physical',
             name='ocean', scale=bscale, edgecolor='face',
-            facecolor=cartopy.feature.COLORS['water'])
+            facecolor=idl_water_color) #cartopy.feature.COLORS['water'])
 
     ax.add_feature(ocean) 
     ax.add_feature(countries, edgecolor='gray', lw=0.375)
-    ax.add_feature(cartopy.feature.LAKES)
+    ax.add_feature(cartopy.feature.LAKES, facecolor=idl_water_color)
     ax.add_feature(cartopy.feature.STATES, lw=0.25, edgecolor='gray')
     return ax
 
@@ -83,7 +87,7 @@ def kts2category(kts):
 ifile = '/glade/work/ahijevyc/work/atcf/Irma.ECMWF.dat'
 ifile = '/glade/scratch/mpasrt/uni/2018071700/latlon_0.500deg_0.25km/gfdl_tracker/tcgen/fort.64'
 
-def vmax_HollandB_to_minp(vmax_kts, HollandB, environmental_pressure_hPa = 1010, density_of_air = 1.15*units["kg/m^3"], debug=False):
+def vmax_HollandB_to_minp(vmax_kts, HollandB, environmental_pressure_hPa = 1013, density_of_air = 1.15*units["kg/m^3"], debug=False):
     vmax = vmax_kts * units["knots"].to("m/s")
     environmental_pressure = environmental_pressure_hPa* units["hPa"].to("Pa")
     minp = environmental_pressure - (vmax**2 * density_of_air * math.e / HollandB)
@@ -106,7 +110,9 @@ def cyclone_phase_space_columns():
 
 
 def getcy(cys):
-    return cys[0:2]
+    # return numeric portion of string
+    # tc_pairs doesn't match an adeck with cy=13L to a best track with cy=13
+    return ''.join([i for i in cys if i.isdigit()])
 
 def speed_heading(lon, lat, time):
 
@@ -200,19 +206,23 @@ def mean_track(df):
     df["model"] = "MEAN"
     return df
 
-def plot_track(start_label,group,end_label, scale=1, debug=False, textcolor="black", label_interval_hours=1, **kwargs):
+def contrasting_color(color):
+    # color could be a size-3 tuple, or a string, like "white"
+    assert mcolors.is_color_like(color)
+    # to_rgba() returns a tuple, which has no attribute 'mean'
+    if np.array(mcolors.to_rgba(color)).mean() >= 0.45:
+        return 'black'
+    return 'white'
+
+def plot_track(start_label,group,end_label, scale=1, debug=False, label_interval_hours=1, **kwargs):
     if debug:
         print("plot_track: "+start_label)
         print(group)
     group = group.sort_values("valid_time")
 
     if plt.gca().projection.proj4_params["lon_0"] == 180:
-        if debug:
-            print("plot_track(): changing longitudes from -180,180 to 0,360")
+        print("plot_track(): changing longitudes from -180,180 to 0,360")
         group.loc[group.lon<0,"lon"] += 360
-
-
-    # change textcolor to white for Blue Marble background
 
     for i in range(0, len(group)):
         row = group.iloc[i]
@@ -223,24 +233,24 @@ def plot_track(start_label,group,end_label, scale=1, debug=False, textcolor="bla
                 row1 = group.iloc[i]
             else:
                 row1 = group.iloc[i+1]
-            plt.text(row.lon,row.lat, start_label, color=textcolor, 
+            plt.text(row.lon,row.lat, start_label, color='black', clip_on=True, 
                     ha='center', va='baseline', fontsize=7*scale, transform=cartopy.crs.PlateCarree())
         elif i == len(group)-1:
             # last half-segment
             row_1 = group.iloc[i-1]
             row1 = group.iloc[i]
-            plt.text(row.lon, row.lat, end_label, color=textcolor, 
+            plt.text(row.lon, row.lat, end_label, color='black', clip_on=True,
                     ha='center', va='baseline', fontsize=7*scale, transform=cartopy.crs.PlateCarree())
         else:
             # middle segments
             row_1 = group.iloc[i-1]
             row1 = group.iloc[i+1]
         lat0 = (row_1.lat + row.lat) / 2.
-        lon0 = (row_1.lon + row.lon) / 2.
+        lon0 = (row_1.lon + row.lon) / 2. # TODO use circmean?
         lw = 2.5 if row.vmax > 34 else 1
-        TCcategory, color = kts2category(row.vmax)
         lat1 = (row.lat + row1.lat) / 2.
         lon1 = (row.lon + row1.lon) / 2.
+        TCcategory, color = kts2category(row.vmax)
         if TCcategory == "TD" and row1.basin == 'TG':
             # IF this is TC genesis track and not a storm with TC vitals
             # use "OTHER (NON TD)" instead of "CLASSIFIED TD" color
@@ -249,9 +259,17 @@ def plot_track(start_label,group,end_label, scale=1, debug=False, textcolor="bla
         segment = plt.plot([lon0,row.lon,lon1],[lat0,row.lat,lat1], # Include middle point. Full segment is a bent line.
                 c=color, lw=lw*scale, transform=cartopy.crs.PlateCarree())
         if row.valid_time.hour % label_interval_hours == 0: # label if hour is multiple of label_interval_hours
-            plt.text(row.lon, row.lat, row.valid_time.strftime("%HZ"), color=textcolor,
-                ha='center',va='top',fontsize=6*scale, transform=cartopy.crs.PlateCarree())
-        plt.plot(row.lon, row.lat, 'o', markersize=scale*2, markerfacecolor="white", color=color, transform=cartopy.crs.PlateCarree())
+            format = "%-d"
+            if row.valid_time.hour != 0:
+                format = "%-Hz"
+            plt.text(row.lon, row.lat, row.valid_time.strftime(format), color=contrasting_color(color), clip_on=True,
+                ha='center',va='center_baseline',fontsize=7*scale, transform=cartopy.crs.PlateCarree())
+        markersize = scale*8 if row.valid_time.hour == 0 else scale*4
+        plt.plot(row.lon, row.lat, 'o', markersize=markersize, markerfacecolor=color, color=color, transform=cartopy.crs.PlateCarree())
+    label = "track label description"
+    already_annotated = label in [x.get_label() for x in plt.gca().texts]
+    if not already_annotated:
+        plt.annotate(s = "day of month at hour 0", xy=(3,3), xycoords='axes pixels', fontsize=6, label=label)
 
 
 def interpolate(df, interval, debug=False):
@@ -375,7 +393,7 @@ def return_expandedwindradii(df):
 converters = {
         "basin" : lambda x: x.upper(), # official is capitalized
         # The problem with CY is ATCF only reserves 2 characters for it.
-        "cy" : lambda x: x.strip(), # cy is not always an integer (e.g. 10E) 
+        "cy" : getcy, # cy is not always an integer (e.g. 10E) 
         "initial_time" : lambda x: pd.to_datetime(x.strip(),format='%Y%m%d%H'),
         #"vmax": float,
         #"minp": float,
@@ -459,6 +477,18 @@ atcfcolumns=["basin","cy","initial_time","technum","model","fhr","lat","lon","vm
     "userdefine3", "userdata3", "userdefine4", "userdata4"]
 
 
+# Return list of columns that are all empty.
+def empty_cols(df, cols=["userdefine","userdata"]):
+    empty_n = []
+    for number in ["1","2","3","4"]:
+        # append number string to column name
+        # if all columns in cols array are empty for this numbered column, add this number to list of empties.
+        these_cols = [col+number for col in cols]
+        if df[these_cols].eq('').all(axis=None): # Tried all(df) but always evaluated to True.
+            empty_n.append(number)
+    return empty_n 
+
+
 def add_missing_dummy_columns(df, columns, debug=False):
     for col in columns:
         if col not in df.columns:
@@ -508,7 +538,7 @@ def read_aswip(ifile = ifile, debug=False):
     #    40    41    42    43     44       45       46       47  
         "B1", "B2", "B3", "B4", "vmax1", "vmax2", "vmax3", "vmax4"]
 
-    df = pd.read_csv(ifile,index_col=None,header=None, delimiter=",", names=names, converters=converters, verbose=True, #verbose means Indicate number of NA values placed in non-numeric columns 
+    df = pd.read_csv(ifile,index_col=None,header=None, delimiter=",", names=names, converters=converters, 
         na_values=na_values, dtype=dtype, skipinitialspace=True, engine='c') # engine='c' is faster than engine="python"
 
     # convert string lat lon column to float. So we can write atcf file. valid_time not needed by write() method..
@@ -516,6 +546,9 @@ def read_aswip(ifile = ifile, debug=False):
 
     # Add missing ATCF columns with dummy data.
     df = add_missing_dummy_columns(df, atcfcolumns)
+
+    # Derive valid time.   valid_time = initial_time + fhr (used in read_aswip too)
+    df['valid_time'] = df.initial_time + pd.to_timedelta(df.fhr, unit='h')
 
     return df
 
@@ -540,28 +573,28 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
         if debug:
             print("max number of columns", max_num_cols)
 
-    # Output from HWRF vortex tracker, fort.64 and fort.66
+    # Output from GFDL vortex tracker, fort.64 and fort.66
     # are mostly ATCF format but have subset of columns
     if num_cols == 43:
-        print('assume HWRF tracker fort.64-style output with 43 columns in', ifile)
+        print('assume GFDL tracker fort.64-style output with 43 columns in', ifile)
         TPstr = "THERMO PARAMS"
         if testline[35].strip() != TPstr:
             print("expected 36th column to be", TPstr)
             print("got", testline[35].strip())
             sys.exit(4)
         for ii in range(20,35):
-            names[ii] = "space filler"
+            names[ii] = "space filler" + str(ii-19) # duplicate names not allowed
         names = names[0:35]
         names.append(TPstr)
         names.extend(cyclone_phase_space_columns())
         names.append('warmcore')
         names.append("warmcore_strength")
-        names.append("string")
-        names.append("string")
+        names.append("string1")
+        names.append("string2")
 
     # fort.66 has track id in the 3rd column.
     if num_cols == 31:
-        print('Assuming fort.66-style with 31 columns in', ifile)
+        print('Assuming GFDL track fort.66-style with 31 columns in', ifile)
         # There is a cyclogenesis ID column for fort.66
         if debug:
             print('inserted ID for cyclogenesis in column 2 (zero-based)')
@@ -631,7 +664,7 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
         print("Exiting.")
         sys.exit(2)
 
-    # Derive valid time.   valid_time = initial_time + fhr
+    # Derive valid time.   valid_time = initial_time + fhr (used in read_aswip too)
     df['valid_time'] = df.initial_time + pd.to_timedelta(df.fhr, unit='h')
     # add minutes for BEST tracks. 2-digit minutes are in the TECHNUM column for BEST tracks. TECHNUM means something else for non-BEST tracks and shouldn't be added like a timedelta.
     besttracks = df[df.model == 'BEST']
@@ -987,7 +1020,9 @@ def update_df(df, initial_time, model, fhr, raw_vmax_kts, raw_RMW_nm, raw_minp, 
     if gridfile is not None:
         # Append origmesh file to userdata1 column (after a comma)
         df.loc[i,"userdefine2"] = 'originalmeshfile'
-        assert os.path.isfile(os.path.realpath(gridfile))
+        if not os.path.isfile(os.path.realpath(gridfile)):
+            print("atcf.update_df(): no gridfile",gridfile)
+            sys.exit(1)
         df.loc[i,"userdata2"]   = os.path.realpath(gridfile)
         if debug:
             print("appended original mesh filename to atcf row")
@@ -1004,7 +1039,8 @@ def update_df(df, initial_time, model, fhr, raw_vmax_kts, raw_RMW_nm, raw_minp, 
             print("dropping old row")
         df = df[~i]
         if debug:
-            print("appending ", newlines)
+            print("appending")
+            print(newlines)
         df = df.append(newlines, sort=False) 
     # Sort DataFrame by index (deal with appended wind radii lines)
     # sort by rad too. I tried to avoid this, but when rad=0, it would be left behind other fhrs that had rad>0.
@@ -1018,8 +1054,7 @@ def update_df(df, initial_time, model, fhr, raw_vmax_kts, raw_RMW_nm, raw_minp, 
 
 def write(ofile, df, fullcircle=False, append=False, debug=False):
     if df.empty:
-        print("afcf.write(): DataFrame is empty.", ofile, "not written")
-        return
+        print("afcf.write(): DataFrame is empty.")
 
     # TODO: deal with fullcircle.
 
@@ -1132,6 +1167,7 @@ def origgridWRF(df, griddir, grid="d03", wind_radii_method = "max", debug=False)
         if debug:
             print("Extract vmax, RMW, minp, and radii of wind thresholds from row", row.name)
         raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm, raw_pouter_mb, raw_router_nm = derived_winds(u10, v10, mslp, lonCell, latCell, row, wind_radii_method=wind_radii_method, debug=debug)
+        # TODO: does this call to update_df() have the right arguments? I think I changed it in the origgrid for ECMWF reading. 
         df = update_df(df, row, raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm, raw_pouter_mb=raw_pouter_mb,
                 raw_routernm=raw_router_nm, gridfile=gridfile, debug=debug)
 
@@ -1229,7 +1265,7 @@ def origgrid(df, griddir, ensemble_prefix="ens_", wind_radii_method="max", debug
             mslp = mslps[itime,:,:]
 
             # Extract vmax, RMW, minp, and radii of wind thresholds
-            #row = row.squeeze() # Convert 1-row DataFrame to Series. Do this in function call, so row isn't really changed after function is completed.
+            #row = row.squeeze() # Convert 1-row DataFrame to Series. Do this when calling function, so row isn't really changed after function is completed.
             raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm, raw_pouter_mb, raw_router_nm = derived_winds(u10, v10, mslp, lonCell, latCell, row.squeeze(), wind_radii_method=wind_radii_method, debug=debug)
 
             df = update_df(df, initial_time, model, fhr, raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm, raw_pouter_mb=raw_pouter_mb,
