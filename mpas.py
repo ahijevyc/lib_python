@@ -13,7 +13,7 @@ def get_diag_name(valid_time, prefix='diag.', suffix='.nc'):
     diag_name = prefix + valid_time.strftime("%Y-%m-%d_%H.%M.%S") + suffix
     return diag_name
 
-def origmesh(df, initfile, diagdir, debug=False):
+def origmesh(df, initfile, diagdir, wind_radii_method="max", debug=False):
 
     # Get raw values from MPAS mesh
 
@@ -57,8 +57,9 @@ def origmesh(df, initfile, diagdir, debug=False):
     for index, row in df.iterrows():
         diagfile = get_diag_name(row.valid_time, prefix='diag.', suffix='.nc')
 
-        if debug: print("reading diagfile", diagdir+diagfile)
-        nc = Dataset(diagdir+diagfile, "r")
+        diagfile = diagdir+diagfile
+        if debug: print("reading diagfile", diagfile)
+        nc = Dataset(diagfile, "r")
 
         u10  = nc.variables['u10'][itime,:]
         v10  = nc.variables['v10'][itime,:]
@@ -66,11 +67,13 @@ def origmesh(df, initfile, diagdir, debug=False):
         nc.close()
 
         # Extract vmax, RMW, minp, and radii of wind thresholds
-        raw_vmax_kts, raw_RMW_nm, raw_minp, rad_nm = atcf.derived_winds(u10, v10, mslp, lonCell, latCell, row, debug=debug)
+        raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm, raw_pouter_mb, raw_router_nm = atcf.derived_winds(u10, v10, mslp, lonCell, latCell, row, wind_radii_method=wind_radii_method, debug=debug)
 
         # TODO: figure out how to replace the row with (possibly) multiple rows with different wind radii
         # without passing df, the entire DataFrame
-        df = atcf.update_df(df, row, raw_vmax_kts, raw_RMW_nm, raw_minp, rad_nm, debug=debug)
+        #df = atcf.update_df(df, row, raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm, debug=debug)
+        df = atcf.update_df(df, row.initial_time, row.model, row.fhr, raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm, raw_pouter_mb=raw_pouter_mb,
+                raw_router_nm=raw_router_nm, gridfile=diagfile, debug=debug)
     if debug:
         print("mpas.origmesh() pausing before return")
         pdb.set_trace()

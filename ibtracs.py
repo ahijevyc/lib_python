@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 import argparse
 import matplotlib
-matplotlib.use("TkAgg")
+matplotlib.use("Agg") # Tried tkAgg for access to plt.show() interactivity but didn't work as user mpasrt with bad x11 connection
 import matplotlib.pyplot as plt
 import pandas as pd
 import pdb
