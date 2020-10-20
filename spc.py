@@ -95,7 +95,7 @@ def RyanSobash(start=None, end=None, event_type="torn", debug=False):
 
 def get_storm_reports( 
         start = datetime.datetime(2016,6,10,0,0,0,0,pytz.UTC), 
-        end   = datetime.datetime(2016,7,1,0,0,0,0,pytz.UTC), 
+        end   = datetime.datetime(2016,7, 1,0,0,0,0,pytz.UTC), 
         event_types = ["torn", "wind", "hail"],
         debug      = False
         ):
@@ -247,7 +247,8 @@ def get_storm_reports(
                 print("spc.get_storm_reports(): found",len(unknown_timezones),"unknown time zones")
                 #print(unknown_timezones, file=sys.stderr)
 
-        time_window = (rpts.time >= start) & (rpts.time < end)
+        # used to say rpts.time < end. But if rpts.time == end it would not get included. 
+        time_window = (rpts.time >= start) & (rpts.time <= end)
         rpts = rpts[time_window]
         if debug:
             print("found",len(rpts),event_type,"reports")
