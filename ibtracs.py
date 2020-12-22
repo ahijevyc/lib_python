@@ -59,7 +59,8 @@ def ibtracs_to_atcf(df, debug=False):
             }
     df.rename(columns = column_match, inplace=True)
 
-
+    # Fill in nan vmax from WMO_WIND with USA_WIND
+    df["vmax"].fillna(df["USA_WIND"], inplace=True)
 
     df["valid_time"] = pd.to_datetime(df["valid_time"])
     df["initial_time"] = df["valid_time"]
@@ -223,6 +224,7 @@ def extension(stormname, season):
                                                   datetime(2012,9,2, 0), datetime(2012,9,2, 3), datetime(2012,9,2, 6), datetime(2012,9,2, 9)],
              "lat"     : [ 38.4,  38.5,  38.7,  38.7,  38.6,  39.1,  38.7,  38.5,  38.9],
              "lon"     : [-93.3, -93.6, -93.1, -93.0, -92.0, -91.7, -90.9, -90.6, -89.7],
+             "storm_size_S" : 1.0, # Does this make sense as a fill-in value?
             }
         }
 
