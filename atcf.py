@@ -33,6 +33,107 @@ colors = {"NONTD": colors[0],
 idl_water_color = np.array([235.,234.,242.])/255.
 
 
+ms2kts = 1 * units["m/s"].to("knots").magnitude # 1.94384
+km2nm  = 1 * units["km"].to("nautical_mile").magnitude # 0.539957
+# Ellipsoid [CLARKE 1866]  Semi-Major Axis (Equatorial Radius)
+Rearth = 6378.2064
+
+
+quads = {'NE':0, 'SE':90, 'SW':180, 'NW':270}
+thresh_kts = np.array([34, 50, 64])
+
+def getcy(cys): # needed to define converters below.
+    # return numeric portion of string
+    # tc_pairs doesn't match an adeck with cy=13L to a best track with cy=13
+    return ''.join([i for i in cys if i.isdigit()])
+
+converters = {
+        "basin" : lambda x: x.upper(), # official is capitalized
+        # The problem with CY is ATCF only reserves 2 characters for it.
+        "cy" : getcy, # cy is not always an integer (e.g. 10E) 
+        "initial_time" : lambda x: pd.to_datetime(x.strip(),format='%Y%m%d%H'),
+        #"vmax": float,
+        #"minp": float,
+        "ty": str, # why was this not in here for so long?
+        "rad" : lambda x: x.strip(), # not a continuous value; it is a category. Important for interpolating in time.
+        "windcode" : lambda x: x[-3:],
+        "subregion": lambda x: x[-2:],
+         # subregion ends up being 3 characters when written with .to_string
+         # strange subregion only needs one character, but official a-decks leave 3. 
+        "initials" : lambda x: x[-3:],
+        'stormname': lambda x: x[-9:],
+        'depth'    : lambda x: x[-1:],
+        "seascode" : lambda x: x[-3:],
+        "userdefine1": str,
+        "userdata1"  : str,
+        "userdefine2": str,
+        "userdata2"  : str,
+        "userdefine3": str,
+        "userdata3"  : str,
+        "userdefine4": str,
+        "userdata4"  : str,
+        }
+
+dtype = {
+        'technum'  : float, #Tried int, but int can't be nan. 
+        "pouter"   : float,
+        "rad1"     : float,
+        "rad2"     : float,
+        "rad3"     : float,
+        "rad4"     : float,
+        "router"   : float,
+        'rmw'      : float,
+        'gusts'    : float,
+        'eye'      : float,
+        'maxseas'  : float,
+        "seas1"    : float,
+        "seas2"    : float,
+        "seas3"    : float,
+        "seas4"    : float,
+        'heading'  : float,
+        'speed'    : float,
+        "seas"     : float,
+        } 
+
+# Tried using converter for these columns, but couldn't convert 4-space string to float.
+# If you add a key na_values, also add it to dtype dict, and remove it from converters.
+na_values = {
+        "technum"  : 3*' ',
+        "rad1"     : 4*' ',
+        "rad2"     : 4*' ',
+        "rad3"     : 4*' ',
+        "rad4"     : 4*' ',
+        "pouter"   : 4*' ',
+        "router"   : 4*' ',
+        "rmw"      : 4*' ',
+        "gusts"    : 4*' ',
+        "eye"      : 4*' ',
+        "maxseas"  : 4*' ',
+        "heading"  : 4*' ',
+        "speed"    : 4*' ',
+        "seas"     : 3*' ', # one less than other columns
+        "seas1"    : 4*' ',
+        "seas2"    : 4*' ',
+        "seas3"    : 4*' ',
+        "seas4"    : 4*' ',
+        "seas4"    : 4*' ',
+        "HollandB" : 'Infinity',
+        "B1"       : 'Infinity',
+        "B2"       : 'Infinity',
+        "B3"       : 'Infinity',
+        "B4"       : 'Infinity',
+        }
+
+# Standard ATCF columns (doesn't include track id, like in fort.66).
+# https://www.nrlmry.navy.mil/atcf_web/docs/database/new/abrdeck.html
+# Updated format https://www.nrlmry.navy.mil/atcf_web/docs/database/new/abdeck.txt 
+atcfcolumns=["basin","cy","initial_time","technum","model","fhr","lat","lon","vmax","minp","ty",
+    "rad", "windcode", "rad1", "rad2", "rad3", "rad4", "pouter", "router", "rmw", "gusts", "eye",
+    "subregion", "maxseas", "initials", "heading", "speed", "stormname", "depth", "seas", "seascode",
+    "seas1", "seas2", "seas3", "seas4", "userdefine1", "userdata1", "userdefine2", "userdata2",
+    "userdefine3", "userdata3", "userdefine4", "userdata4"]
+
+
 def basins():
     return {
         "al": (-99,-22,0,38),
@@ -109,10 +210,34 @@ def cyclone_phase_space_columns():
     return names 
 
 
-def getcy(cys):
-    # return numeric portion of string
-    # tc_pairs doesn't match an adeck with cy=13L to a best track with cy=13
-    return ''.join([i for i in cys if i.isdigit()])
+
+def V500c(Vmax_knots, latitude_degrees):
+    # Climatological tangential wind 500 km from the center 
+    # Zehr and Knaff, equations 4, 5, 6
+    # https://journals.ametsoc.org/waf/article/22/1/71/38805/Reexamination-of-Tropical-Cyclone-Wind-Pressure
+        
+    shape_factor_x = 0.1147 + 0.0055 * Vmax_knots - 0.001 * (latitude_degrees - 25.)
+    Rmax = 66.785 - 0.09102 * Vmax_knots + 1.0619 * (latitude_degrees - 25.)
+    climatological_tangential_wind_500_km_from_the_center = Vmax_knots * (Rmax/500.)**shape_factor_x
+    if np.ndim(Vmax_knots) == 0: # deal with scalar
+        if Vmax_knots < 15.:
+            return Vmax_knots
+    else: # deal with iterables
+        if any(Vmax_knots < 15.):
+            print("atcf.V500c(): leaving Vmax < 15 unchanged")
+            climatological_tangential_wind_500_km_from_the_center[Vmax_knots < 15] = Vmax_knots[Vmax_knots < 15]
+    return climatological_tangential_wind_500_km_from_the_center 
+
+def Knaff_Zehr_Pmin(Vsrm1_knots, storm_size_S, latitude_degrees, environmental_pressure_hPa):
+    # Equation 1 in Courtney and Knaff http://rammb.cira.colostate.edu/resources/docs/Courtney&Knaff_2009.pdf
+    Pc = 23.286 - 0.483 * Vsrm1_knots - ( Vsrm1_knots/24.254 )**2. - 12.587*storm_size_S - 0.483*latitude_degrees + environmental_pressure_hPa
+    return Pc
+
+def Vsrm(Vmax_knots, storm_motion_in_knots_C):
+    # Replace NaN with zero.
+    storm_motion_in_knots_C = storm_motion_in_knots_C.fillna(0)
+    return Vmax_knots - 1.5 * storm_motion_in_knots_C**0.63
+
 
 def speed_heading(lon, lat, time):
 
@@ -271,6 +396,15 @@ def plot_track(start_label,group,end_label, scale=1, debug=False, label_interval
     if not already_annotated:
         plt.annotate(s = "day of month at hour 0", xy=(3,3), xycoords='axes pixels', fontsize=6, label=label)
 
+def TClegend(fig, left=94, up=32):
+    # legend was screen-grabbed from tropicalatlantic.com
+    #legend = plt.imread('/glade/work/ahijevyc/share/tropicalatlantic.legend.png')
+    legend = plt.imread('/glade/work/ahijevyc/share/TClegend.png')
+    # overlay left pixels in and up pixels up from bottom left corner
+    l = fig.figimage(legend, left, up)
+    # Bring legend to front
+    l.set_zorder(3)
+    return l
 
 def interpolate(df, interval, debug=False):
 
@@ -325,7 +459,7 @@ def interpolate(df, interval, debug=False):
                 print("atcf.interpolate(): redo best track speed and heading")
             speed, heading = speed_heading(x.lon, x.lat, x.valid_time)
             x.loc[1:,"heading"] = heading[1:] # skip first element; it is always missing coming out of speed_heading()
-            df2 = df2.append(x)
+            df2 = df2.append(x, sort=True)
 
     # handle multiple models, init_times, etc.
     if not othrtrack.empty:
@@ -349,7 +483,7 @@ def interpolate(df, interval, debug=False):
             speed, heading = speed_heading(x.lon, x.lat, x.valid_time)
             x.loc[1:,"heading"] = heading[1:] # skip first element; it is always missing coming out of speed_heading()
             x = x.dropna(how='all', subset=['initial_time']) # I think this cleans up undefined extrapolated times
-            df2 = df2.append(x)
+            df2 = df2.append(x, sort=True)
 
     df2.drop(columns="myrad", inplace=True)
     df2.sort_values(by=['basin','cy','initial_time','model','valid_time','rad'], inplace=True)
@@ -390,95 +524,8 @@ def return_expandedwindradii(df):
     # Tried leaving as MultiIndex DataFrame but it led to all sorts of problems.
     return df
 
-converters = {
-        "basin" : lambda x: x.upper(), # official is capitalized
-        # The problem with CY is ATCF only reserves 2 characters for it.
-        "cy" : getcy, # cy is not always an integer (e.g. 10E) 
-        "initial_time" : lambda x: pd.to_datetime(x.strip(),format='%Y%m%d%H'),
-        #"vmax": float,
-        #"minp": float,
-        "ty": str, # why was this not in here for so long?
-        "rad" : lambda x: x.strip(), # not a continuous value; it is a category. Important for interpolating in time.
-        "windcode" : lambda x: x[-3:],
-        "subregion": lambda x: x[-2:],
-         # subregion ends up being 3 characters when written with .to_string
-         # strange subregion only needs one character, but official a-decks leave 3. 
-        "initials" : lambda x: x[-3:],
-        'stormname': lambda x: x[-9:],
-        'depth'    : lambda x: x[-1:],
-        "seascode" : lambda x: x[-3:],
-        "userdefine1": str,
-        "userdata1"  : str,
-        "userdefine2": str,
-        "userdata2"  : str,
-        "userdefine3": str,
-        "userdata3"  : str,
-        "userdefine4": str,
-        "userdata4"  : str,
-        }
-
-dtype = {
-        'technum'  : float, #Tried int, but int can't be nan. 
-        "pouter"   : float,
-        "rad1"     : float,
-        "rad2"     : float,
-        "rad3"     : float,
-        "rad4"     : float,
-        "router"   : float,
-        'rmw'      : float,
-        'gusts'    : float,
-        'eye'      : float,
-        'maxseas'  : float,
-        "seas1"    : float,
-        "seas2"    : float,
-        "seas3"    : float,
-        "seas4"    : float,
-        'heading'  : float,
-        'speed'    : float,
-        "seas"     : float,
-        } 
-
-# Tried using converter for these columns, but couldn't convert 4-space string to float.
-# If you add a key na_values, also add it to dtype dict, and remove it from converters.
-na_values = {
-        "technum"  : 3*' ',
-        "rad1"     : 4*' ',
-        "rad2"     : 4*' ',
-        "rad3"     : 4*' ',
-        "rad4"     : 4*' ',
-        "pouter"   : 4*' ',
-        "router"   : 4*' ',
-        "rmw"      : 4*' ',
-        "gusts"    : 4*' ',
-        "eye"      : 4*' ',
-        "maxseas"  : 4*' ',
-        "heading"  : 4*' ',
-        "speed"    : 4*' ',
-        "seas"     : 3*' ', # one less than other columns
-        "seas1"    : 4*' ',
-        "seas2"    : 4*' ',
-        "seas3"    : 4*' ',
-        "seas4"    : 4*' ',
-        "seas4"    : 4*' ',
-        "HollandB" : 'Infinity',
-        "B1"       : 'Infinity',
-        "B2"       : 'Infinity',
-        "B3"       : 'Infinity',
-        "B4"       : 'Infinity',
-        }
-
-# Standard ATCF columns (doesn't include track id, like in fort.66).
-# https://www.nrlmry.navy.mil/atcf_web/docs/database/new/abrdeck.html
-# Updated format https://www.nrlmry.navy.mil/atcf_web/docs/database/new/abdeck.txt 
-atcfcolumns=["basin","cy","initial_time","technum","model","fhr","lat","lon","vmax","minp","ty",
-    "rad", "windcode", "rad1", "rad2", "rad3", "rad4", "pouter", "router", "rmw", "gusts", "eye",
-    "subregion", "maxseas", "initials", "heading", "speed", "stormname", "depth", "seas", "seascode",
-    "seas1", "seas2", "seas3", "seas4", "userdefine1", "userdata1", "userdefine2", "userdata2",
-    "userdefine3", "userdata3", "userdefine4", "userdata4"]
-
-
-# Return list of columns that are all empty.
-def empty_cols(df, cols=["userdefine","userdata"]):
+# Return list of user-defined columns that are all empty.
+def empty_usercols(df, cols=["userdefine","userdata"]):
     empty_n = []
     for number in ["1","2","3","4"]:
         # append number string to column name
@@ -745,11 +792,12 @@ def lon2s(lon):
 # Returns 2 things:
 #   1) distance in km
 #   2) initial bearing from 1st pt (lon1, lat1) to an array of other points (lons, lats).
-def dist_bearing(lon1,lat1,lons,lats,debug=False):
+def dist_bearing(lon1,lat1,lons,lats,Rearth=Rearth, debug=False):
     assert lat1 < 90, "lat1 > 90"
     assert lat1 > -90, "lat1 < -90"
-    assert lats.max() < 90, "lats element > 90"
-    assert lats.min() > -90, "lats element < -90"
+    # TODO: allow scalar lons, lats
+    #assert lats.max() < 90, "lats element > 90"
+    #assert lats.min() > -90, "lats element < -90"
     lon1 = np.radians(lon1)
     lat1 = np.radians(lat1)
     lons = np.radians(lons)
@@ -773,24 +821,15 @@ def dist_bearing(lon1,lat1,lons,lats,debug=False):
     # -180 - 180 -> 0 - 360
     bearing = (bearing + 360) % 360
     
-    # Ellipsoid [CLARKE 1866]  Semi-Major Axis (Equatorial Radius)
-    a = 6378.2064
-
     if (np.fabs(arg) > 1).any():
         print("atcf.dist_bearing(): arg=",arg)
         pdb.set_trace()
         
-    return np.arccos(arg)* a, bearing 
+    return np.arccos(arg)* Rearth, bearing 
 
-
-ms2kts = 1 * units["m/s"].to("knots").magnitude # 1.94384
-km2nm  = 1 * units["km"].to("nautical_mile").magnitude # 0.539957
-
-quads = {'NE':0, 'SE':90, 'SW':180, 'NW':270}
-thresh_kts = np.array([34, 50, 64])
 
 def get_azimuthal_mean(x, distance_km, binsize_km = 25.):
-    radius = np.arange(0, max(distance_km), binsize_km)
+    radius = np.arange(0, distance_km.max(), binsize_km)
     x_vs_radius = [] # maybe should be numpy array but can't remember syntax
     for r in radius:
         i = (r <= distance_km) & (distance_km < r+binsize_km)
@@ -896,34 +935,32 @@ def derived_winds(u10, v10, mslp, lonCell, latCell, row, vmax_search_radius=250.
     # Derive cell distances and bearings
     distance_km, bearing = dist_bearing(row.lon, row.lat, lonCell, latCell)
 
-    # Derive 10m wind speed and Vt from u10 and v10
+    # Derive 10m wind speed and tangential wind speed Vt from u10 and v10
     speed_kts = np.sqrt(u10**2 + v10**2) * ms2kts
 
     # Tangential (cyclonic) wind speed
-    # v dx - u dy 
-    dx = lonCell - row.lon
-    # work on the dateline?
-    dx[dx>=180] = dx[dx>=180]-360.
-    dy = latCell - row.lat
-    Vt = v10 * dx - u10 * dy
+    # v dx - u dy # i don't think this is right.
+    # This is better:
+    # v * sin(bearing) - u * cos(bearing)
+    Vt_kts = ( v10 * np.sin(np.radians(bearing)) - u10 * np.cos(np.radians(bearing)) ) * ms2kts
     if row.lat < 0:
-        Vt = -Vt
+        Vt_kts = -Vt_kts
 
     # Restrict Vmax search to a certain radius (vmax_search_radius)
     vmaxrad = distance_km < vmax_search_radius
     ispeed_max = np.argmax(speed_kts[vmaxrad])
     raw_vmax_kts =  speed_kts[vmaxrad].max()
 
-    # If vmax > 17, check if tangential component of max wind is negative (anti-cyclonic)
-    if row.vmax > 17 and Vt[vmaxrad][ispeed_max] < 0:
+    # If vmax > 34, check if tangential component of max wind is negative (anti-cyclonic)
+    if row.vmax > 34 and Vt_kts[vmaxrad][ispeed_max] < 0:
         print("center", row.valid_time, row.lat, row.lon)
-        print("max wind is anti-cyclonic! (unknown units)", Vt[vmaxrad][ispeed_max])
+        print("max wind is anti-cyclonic! (unknown units)", Vt_kts[vmaxrad][ispeed_max])
         print("max wind lat/lon", latCell[vmaxrad][ispeed_max], lonCell[vmaxrad][ispeed_max])
         print("max wind U/V",         u10[vmaxrad][ispeed_max],     v10[vmaxrad][ispeed_max])
         if debug: pdb.set_trace()
 
     # Check if average tangential wind within search radius is negative (anti-cyclonic)
-    average_tangential_wind = np.average(Vt[vmaxrad])
+    average_tangential_wind = np.average(Vt_kts[vmaxrad])
     if average_tangential_wind < 0:
         print("center", row.valid_time, row.lat, row.lon)
         print("avg wind is anti-cyclonic!", average_tangential_wind)
@@ -941,14 +978,41 @@ def derived_winds(u10, v10, mslp, lonCell, latCell, row, vmax_search_radius=250.
     # Get max extent of wind at thresh_kts thresholds.
     wind_radii_nm = get_ext_of_wind(speed_kts, distance_km, bearing, raw_vmax_kts, latCell=latCell, lonCell=lonCell, wind_radii_method=wind_radii_method, debug=debug)
 
-    # Restrict pressure of last closed isobar and radius of last closed isobar search to a certain radius
+    # Restrict pressure of last closed isobar and radius of last closed isobar search to a certain radius.
     pouter_rad = distance_km < pouter_search_radius
     imslp_max = np.argmax(mslp[pouter_rad])
     raw_pouter_mb =  mslp[pouter_rad][imslp_max] / 100.
     assert raw_pouter_mb == mslp[pouter_rad].max() / 100.
     raw_router_nm =  distance_km[pouter_rad][imslp_max] * km2nm
+    # Option 2
+    # Zehr and Knaff (2007) https://journals.ametsoc.org/waf/article/22/1/71/38805/Reexamination-of-Tropical-Cyclone-Wind-Pressure
+    # define pouter_rad as the annular average sea level pressure 800-1000 km.
+    # I guess raw_router_nm (ROCI) is fixed at 900 km in this case.
 
-    return raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm, raw_pouter_mb, raw_router_nm
+    Vt_azimuthal_mean, radius_km = get_azimuthal_mean(Vt_kts, distance_km, binsize_km = 200.)
+    i400, = np.nonzero(radius_km == 400)[0] # use [0] and comma , 
+    Vt_500km_kts = Vt_azimuthal_mean[i400] * ms2kts
+    if Vt_500km_kts < 0:
+        print("atcf.derived_winds(): mean tangential wind 400-600km out is negative! TODO: figure out how to define storm_size_S.") 
+    storm_size_S = Vt_500km_kts / V500c(row.vmax, row.lat) # Should I use the input row.vmax or the raw_vmax_kts from the raw model?
+    # I originally put raw_vmax_kts, but I changed to row.vmax. It depends which one you think is more accurate. 
+    # For NARR at least, I think the input row.vmax is more accurate because NARR is coarse and biased low.
+    penv_azimuthal_mean, radius_km = get_azimuthal_mean(mslp, distance_km, binsize_km = 200.)
+    i800, = np.nonzero(radius_km == 800)[0]
+    penv_mb   = penv_azimuthal_mean[i800] / 100.
+
+    derived_winds_dict = {
+            "raw_vmax_kts"  : raw_vmax_kts,
+            "raw_RMW_nm"    : raw_RMW_nm,
+            "raw_minp"      : raw_minp,
+            "wind_radii_nm" : wind_radii_nm, 
+            "raw_pouter_mb" : raw_pouter_mb,
+            "raw_router_nm" : raw_router_nm,
+            "Vt_500km_kts"  : Vt_500km_kts, # used for Zehr and Knaff Pmin derivation.
+            "storm_size_S"  : storm_size_S, # used for Zehr and Knaff Pmin derivation.
+            "penv_mb"       : penv_mb # used for Zehr and Knaff Pmin derivation.
+            }
+    return derived_winds_dict
 
 
 def add_wind_rad_lines(row, wind_radii_nm, fullcircle=False, debug=False):
@@ -982,13 +1046,12 @@ def add_wind_rad_lines(row, wind_radii_nm, fullcircle=False, debug=False):
                         wind_radii_nm[thresh]['NW']
                         ]
             # Append row with 34, 50, or 64 knot radii
-            lines = lines.append(newrow)
+            lines = lines.append(newrow, sort=True)
     
     return lines
 
 
-def update_df(df, initial_time, model, fhr, raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm, raw_pouter_mb=None,
-        raw_router_nm=None, gridfile=None, debug=False):
+def update_df(df, initial_time, model, fhr, derived_winds_dict, gridfile=None, debug=False):
 
     # Called by origgrid and origmesh
    
@@ -999,40 +1062,54 @@ def update_df(df, initial_time, model, fhr, raw_vmax_kts, raw_RMW_nm, raw_minp, 
     if debug:
         print("atcf.update_df(): before update")
         print(df.loc[i, ['valid_time','lon','lat', 'vmax', 'minp', 'rmw', 'pouter','router']]) 
-    df.loc[i, "vmax"] = raw_vmax_kts
-    df.loc[i, "minp"] = raw_minp
-    df.loc[i, "rmw"]  = raw_RMW_nm
-    if raw_pouter_mb:
-        df.loc[i, "pouter"] = raw_pouter_mb
-    if raw_router_nm:
-        df.loc[i, "router"] = raw_router_nm
+    df.loc[i, "vmax"] = derived_winds_dict["raw_vmax_kts"]
+    df.loc[i, "minp"] = derived_winds_dict["raw_minp"]
+    df.loc[i, "rmw"]  = derived_winds_dict["raw_RMW_nm"]
+    if "raw_pouter_mb" in derived_winds_dict:
+        df.loc[i, "pouter"] = derived_winds_dict["raw_pouter_mb"]
+    if "raw_router_nm" in derived_winds_dict:
+        df.loc[i, "router"] = derived_winds_dict["raw_router_nm"]
     # stop for debugging if "origmesh" string found in one of the user defined columns
     for n in ["1", "2", "3", "4"]:
         for col in ["userdefine"+n, "userdata"+n]:
             if col in df.columns and 'origmesh' in df.loc[i, col]:
                 print("wait. this row already has original mesh values")
                 pdb.set_trace()
+
+    # Get list of empty user columns; pop off first element of list.
+    # Don't require all rows to be empty. Just the i row.
+    empty_usercol = empty_usercols(df.loc[i], cols=["userdefine","userdata"]).pop(0)
+
     # Add note of original mesh = True in user data (not defined) column
-    df.loc[i, "userdefine1"] = 'origmesh wind_radii_method'
-    df.loc[i,"userdata1"]   = wind_radii_nm["wind_radii_method"]
+    df.loc[i, "userdefine"+empty_usercol] = 'origmesh wind_radii_method'
+    df.loc[i, "userdata"+empty_usercol]   = derived_winds_dict["wind_radii_nm"]["wind_radii_method"]
     if debug:
         print("appended original mesh wind radii method to atcf row")
+
     if gridfile is not None:
+        empty_usercol = empty_usercols(df.loc[i], cols=["userdefine","userdata"]).pop(0)
         # Append origmesh file to userdata1 column (after a comma)
-        df.loc[i,"userdefine2"] = 'originalmeshfile'
+        df.loc[i,"userdefine"+empty_usercol] = 'originalmeshfile'
         if not os.path.isfile(os.path.realpath(gridfile)):
             print("atcf.update_df(): no gridfile",gridfile)
             sys.exit(1)
-        df.loc[i,"userdata2"]   = os.path.realpath(gridfile)
+        df.loc[i,"userdata"+empty_usercol]   = os.path.realpath(gridfile)
         if debug:
             print("appended original mesh filename to atcf row")
     if debug:
         print('after')
         print(df.loc[i, ['vmax', 'minp', 'rmw', 'pouter', 'router']]) 
 
+    for c in ["penv_mb", "Vt_500km_kts"]: # Used in Knaff and Zehr wind pressure relationship.
+        if c in derived_winds_dict:
+            df.loc[i, c] = derived_winds_dict[c]
+            empty_usercol = empty_usercols(df.loc[i], cols=["userdefine","userdata"]).pop(0)
+            df.loc[i, "userdefine"+empty_usercol] = c
+            df.loc[i, "userdata"+empty_usercol]  = str(derived_winds_dict[c])
+
     # Append 34/50/64 knot lines to DataFrame
     # add_wind_rad_lines expects a series, so apply squeeze()
-    newlines = add_wind_rad_lines(df.loc[i,:].squeeze(), wind_radii_nm, debug=debug)
+    newlines = add_wind_rad_lines(df.loc[i,:].squeeze(), derived_winds_dict["wind_radii_nm"], debug=debug)
     # If there are new lines, drop the old one and append new ones.
     if not newlines.empty:
         if debug:
@@ -1041,7 +1118,7 @@ def update_df(df, initial_time, model, fhr, raw_vmax_kts, raw_RMW_nm, raw_minp, 
         if debug:
             print("appending")
             print(newlines)
-        df = df.append(newlines, sort=False) 
+        df = df.append(newlines, sort=True) 
     # Sort DataFrame by index (deal with appended wind radii lines)
     # sort by rad too. I tried to avoid this, but when rad=0, it would be left behind other fhrs that had rad>0.
     df = df.sort_index().sort_values(['initial_time','fhr','rad'])
@@ -1166,10 +1243,15 @@ def origgridWRF(df, griddir, grid="d03", wind_radii_method = "max", debug=False)
 
         if debug:
             print("Extract vmax, RMW, minp, and radii of wind thresholds from row", row.name)
-        raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm, raw_pouter_mb, raw_router_nm = derived_winds(u10, v10, mslp, lonCell, latCell, row, wind_radii_method=wind_radii_method, debug=debug)
+        derived_winds_dict = derived_winds(u10, v10, mslp, lonCell, latCell, row, wind_radii_method=wind_radii_method, debug=debug)
+        raw_vmax_kts  = derived_winds_dict["raw_vmax_kts"]
+        raw_RMW_nm    = derived_winds_dict["raw_RMW_nm"]
+        raw_minp      = derived_winds_dict["raw_minp"]
+        wind_radii_nm = derived_winds_dict["wind_radii_nm"]
+        raw_pouter_mb = derived_winds_dict["raw_pouter_mb"]
+        raw_router_nm = derived_winds_dict["raw_router_nm"]
         # TODO: does this call to update_df() have the right arguments? I think I changed it in the origgrid for ECMWF reading. 
-        df = update_df(df, row, raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm, raw_pouter_mb=raw_pouter_mb,
-                raw_routernm=raw_router_nm, gridfile=gridfile, debug=debug)
+        df = update_df(df, row, derived_winds_dict, gridfile=gridfile, debug=debug)
 
     # Sort DataFrame by index (deal with appended wind radii lines)
     # sort by rad too
@@ -1192,8 +1274,8 @@ def origgrid(df, griddir, ensemble_prefix="ens_", wind_radii_method="max", debug
     # Assumes
     #   ECMWF data came from TIGGE and were converted from GRIB to netCDF with ncl_convert2nc.
     #   4-character model string in ATCF file is "EExx" (where xx is the 2-digit ensemble member).
-    #   ECMWF ensemble member in directory named "ens_xx" (where xx is the 2-digit ensemble member). 
-    #   File path is "ens_xx/${gs}yyyymmddhh.xx.nc", where ${gs} is the grid spacing (0p15, 0p25, or 0p5).
+    #   ECMWF ensemble member in directory named "<ensemble_prefix>xx" (where xx is the 2-digit ensemble member). 
+    #   File path is "<ensemble_prefix>xx/${gs}yyyymmddhh.xx.nc", where ${gs} is the grid spacing (0p125, 0p15, 0p25, or 0p5).
     # ensemble_prefix may be a single string or a list of strings
 
     if isinstance(ensemble_prefix, str):
@@ -1266,12 +1348,73 @@ def origgrid(df, griddir, ensemble_prefix="ens_", wind_radii_method="max", debug
 
             # Extract vmax, RMW, minp, and radii of wind thresholds
             #row = row.squeeze() # Convert 1-row DataFrame to Series. Do this when calling function, so row isn't really changed after function is completed.
-            raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm, raw_pouter_mb, raw_router_nm = derived_winds(u10, v10, mslp, lonCell, latCell, row.squeeze(), wind_radii_method=wind_radii_method, debug=debug)
+            derived_winds_dict = derived_winds(u10, v10, mslp, lonCell, latCell, row.squeeze(), wind_radii_method=wind_radii_method, debug=debug)
 
-            df = update_df(df, initial_time, model, fhr, raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm, raw_pouter_mb=raw_pouter_mb,
-                    raw_router_nm=raw_router_nm, gridfile=gridfile, debug=debug)
+            df = update_df(df, initial_time, model, fhr, derived_winds_dict, gridfile=gridfile, debug=debug)
 
     return df
 
+def ll_arc_distance(lat0=0, lon0=0, heading_deg=0., distance_km=0., Rearth=Rearth):
+
+    # Don't want to deal with Pandas indices. it will try to match them up, and you get NaNs and a bigger Series if they don't. 
+    lon0 = np.radians(lon0)
+    lat0 = np.radians(lat0)
+    heading_rad = np.radians(heading_deg)
+    d_rad = distance_km/Rearth
+
+    newlat = np.arcsin( np.sin(lat0)*np.cos(d_rad) +
+            np.cos(lat0)*np.sin(d_rad)*np.cos(heading_rad))
+
+    newlon = lon0 + np.arctan2(np.sin(heading_rad)*np.sin(d_rad)*np.cos(lat0),
+                     np.cos(d_rad)-np.sin(lat0)*np.sin(newlat))
+
+
+    return np.degrees(newlon), np.degrees(newlat)
+
+def veer_track(track, veer, debug=False):
+    track1 = track.copy()
+    for i, row in track.iterrows():
+        lon0, lat0, valid_time = row.lon, row.lat, row.valid_time
+        future_times = track.valid_time > valid_time
+        if future_times.sum() == 0:
+            break
+        # use idxmax to find the first instance of the maximum value. In this case, True is the maximum value.
+        next_time = track.valid_time == track.loc[future_times,"valid_time"].iloc[0]
+        # define control segment from time to next time
+        # Reduce (possibly) multiple rows (for different wind radii) to one.
+        lon1 = track.loc[next_time, "lon"].mean()
+        lat1 = track.loc[next_time, "lat"].mean()
+        # days since start of track
+        dt = track.loc[next_time, "valid_time"].mean() - track.valid_time.min()
+        d_km, head = dist_bearing(lon0,lat0,lon1,lat1)
+        new_az = head+veer*dt.total_seconds()/24/3600 
+        
+        # start of perturbed segment is end of previous perturbed segment
+        lon0 = track1.loc[track1.valid_time == valid_time, "lon"].mean()
+        lat0 = track1.loc[track1.valid_time == valid_time, "lat"].mean()
+        # head off in new direction for distance of control segment
+        newlon, newlat = ll_arc_distance(lon0=lon0, lat0=lat0, distance_km=d_km, heading_deg=new_az)
+        # Assign one value to (possibly) multiple rows (for different wind radii).
+        track1.loc[next_time, "lon"] = newlon
+        track1.loc[next_time, "lat"] = newlat
+
+    return track1
+
+
+
 if __name__ == "__main__":
-    read(ifile=sys.argv[1], debug=True)
+    debug=False
+    df = read(ifile=sys.argv[1], debug=debug)
+    ax = get_ax()
+    v0,v1,dv = -10,10,9
+    ofile = "veers-"+str(v0)+"-"+str(v1)+"-"+str(dv)
+    for track_id, track_df in df.groupby(['basin', 'cy', 'initial_time', 'model']):
+        for iveer, veer in enumerate(np.linspace(v0,v1,dv)): # deg / day
+            veered_track_df = veer_track(track_df, veer, debug=debug)
+            veered_track_df["model"] = "PF{:02.0f}".format(iveer)
+            plot_track("", veered_track_df, "{:3.1f}deg/day".format(veer), debug=debug)
+            write(ofile+".dat", veered_track_df, append=True)
+    l = TClegend(ax.figure, up=1, left=1)
+    plt.savefig(ofile + ".png")
+    print(ofile+".dat")
+    print(ofile+".png")
