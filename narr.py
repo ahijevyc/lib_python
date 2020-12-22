@@ -34,7 +34,7 @@ for plev in plevs:
     for ws in ['wind', 'speed', 'u', 'v']:
         f = ws+plev
         if f not in fieldinfo: fieldinfo[f] = {}
-        fieldinfo[f]['levels'] = range(20)
+        fieldinfo[f]['levels'] = range(2,36,2)
         fieldinfo[f]['cmap'] = readNCLcm('wind_17lev')
         fieldinfo[f]['filename'] = narr3D
         fieldinfo[f]['fname'] = ['U_GRD_221_ISBL','V_GRD_221_ISBL'] # changed to get vector data
@@ -95,15 +95,20 @@ fieldinfo['mslp']['units'] = 'hPa'
 fieldinfo['mslet'] = fieldinfo['mslp'].copy()
 fieldinfo['mslet'] = ['MSLET_221_MSL']
 fieldinfo['sbcape']['fname'] = ['CAPE_221_SFC']
+fieldinfo['sbcape']['vertical'] = 'surface-based'
+fieldinfo['sbcinh']['cmap'].reverse()
 fieldinfo['sbcinh']['fname'] = ['CIN_221_SFC']
 fieldinfo['sbcinh']['levels'].reverse()
 fieldinfo['sbcinh']['levels'] = [-x for x in fieldinfo['sbcinh']['levels']] # NARR cin is negative
-fieldinfo['sbcinh']['cmap'].reverse()
+fieldinfo['sbcinh']['vertical'] = 'surface-based'
 fieldinfo['mlcape']['filename'] = narrPBL # 180-0 mb above ground
 fieldinfo['mlcape']['fname'] = ['CAPE_221_SPDY'] # 180-0 mb above ground
+fieldinfo['mlcape']['vertical'] = 'mixed-layer'
 fieldinfo['mlcinh'] = fieldinfo['sbcinh'].copy()
 fieldinfo['mlcinh']['filename'] = narrPBL
 fieldinfo['mlcinh']['fname'] = ['CIN_221_SPDY']
+fieldinfo['mlcinh']['vertical'] = 'mixed-layer'
+fieldinfo['mucape']['vertical'] = 'most unstable'
 fieldinfo['pblh']['fname'] = ['HPBL_221_SFC']
 fieldinfo['precipacc']['fname'] = ['RAINNC']
 #fieldinfo['pwat']['levels'] = [5,10,20,25,30,40,50,60,70,80,90,100] # precipitable water in kg/m**2 not depth-of-water
@@ -118,8 +123,8 @@ fieldinfo['scp'] = fieldinfo['stp'].copy()
 fieldinfo['scp']['fname'] = ['CAPE_221_SFC','CIN_221_SFC','HLCY_221_HTGY','shr10_700']
 fieldinfo['scp']['filename'] = narrSfc
 fieldinfo['scp']['vertical'] = 2
-fieldinfo['sh2']    = {'levels' : [0.2,0.5,1,2,4,8,12,14,16,18,20,22,24], 'cmap':fieldinfo['td2']['cmap'], 'fname'  : ['SPF_H_221_HTGL'], 'filename':narrFlx, 'vertical':2, 'units':'g/kg'}
-fieldinfo['shlev1'] = {'levels' : [0.2,0.5,1,2,4,8,12,14,16,18,20,22,24], 'cmap':fieldinfo['td2']['cmap'], 'fname'  : ['SPF_H_221_HYBL'], 'filename':narrFlx, 'units':'g/kg'}
+fieldinfo['sh2']    = {'levels' : [0.5,1,2,4,8,12,14,16,17,18,19,20,21,22,23,24], 'cmap':fieldinfo['td2']['cmap'], 'fname'  : ['SPF_H_221_HTGL'], 'filename':narrFlx, 'vertical':2, 'units':'g/kg'}
+fieldinfo['shlev1'] = {'levels' : [0.5,1,2,4,8,12,14,16,17,18,19,20,21,22,23,24], 'cmap':fieldinfo['td2']['cmap'], 'fname'  : ['SPF_H_221_HYBL'], 'filename':narrFlx, 'units':'g/kg'}
 fieldinfo['shr10_30']  = fieldinfo['speed10m'].copy()
 fieldinfo['shr10_30']['levels'] = range(0,54,3)
 del(fieldinfo['shr10_30']['vertical']) # shear is 2 levels. vertical is undefined
@@ -149,9 +154,9 @@ fieldinfo['t2']['fname'] = ['TMP_221_SFC']
 fieldinfo['t2']['units'] = 'degF'
 fieldinfo['tctp'] = fieldinfo['stp'].copy()
 fieldinfo['tctp']['fname'][-1] = 'shr10_700'
-fieldinfo['thetasfc'] = {'levels' : np.arange(288,320,2), 'cmap': ['#eeeeee', '#dddddd', '#cccccc', '#aaaaaa']+readNCLcm('precip2_17lev')[3:-1], 'fname'  : ['POT_221_SFC'], 'filename': narrSfc}
-fieldinfo['theta2'] = {'levels' : np.arange(288,320,2), 'cmap': ['#eeeeee', '#dddddd', '#cccccc', '#aaaaaa']+readNCLcm('precip2_17lev')[3:-1], 'fname'  : ['PRES_221_HTGL', 'TMP_221_HTGL'], 'filename': narrFlx, 'vertical':2}
-fieldinfo['thetae2'] = {'levels' : np.arange(312,376,4), 'cmap': ['#eeeeee', '#dddddd', '#cccccc', '#aaaaaa']+readNCLcm('precip2_17lev')[3:-1], 'fname'  : ['PRES_221_HTGL', 'TMP_221_HTGL','DPT_221_HTGL'], 'filename': narrFlx, 'vertical':2}
+fieldinfo['thetasfc'] = {'levels' : np.arange(290,320,2), 'cmap': ['#eeeeee', '#dddddd', '#cccccc', '#aaaaaa']+readNCLcm('precip2_17lev')[3:-1], 'fname'  : ['POT_221_SFC'], 'filename': narrSfc}
+fieldinfo['theta2'] = {'levels' : np.arange(293,316,1), 'cmap': ['#eeeeee', '#dddddd', '#cccccc', '#aaaaaa']+readNCLcm('precip2_17lev')[3:-1], 'fname'  : ['PRES_221_HTGL', 'TMP_221_HTGL'], 'filename': narrFlx, 'vertical':2}
+fieldinfo['thetae2'] = {'levels' : np.arange(321,375,3), 'cmap': ['#eeeeee', '#dddddd', '#cccccc', '#aaaaaa']+readNCLcm('precip2_17lev')[3:-1], 'fname'  : ['PRES_221_HTGL', 'TMP_221_HTGL','DPT_221_HTGL'], 'filename': narrFlx, 'vertical':2}
 fieldinfo['vvellev1'] = fieldinfo['vvel700'].copy()
 fieldinfo['vvellev1']['fname'] = ['V_VEL_221_HYBL']
 fieldinfo['wvflux'] = {'fname':['WVUFLX_221_ISBY_acc3h','WVVFLX_221_ISBY_acc3h'],'filename':narrFlx,'arrow':True}
@@ -197,6 +202,8 @@ def get(valid_time, targetdir='.', narrtype=narr3D, idir=idir, debug=False):
         #TODO: Make sure file is complete. Another instance of narr.get() may still be writing it.
         pass
     else:
+        print("narr.get(): previously existing narr file not found",narr)
+        pdb.set_trace()
         narr_grb = narr[:-3] # drop '.nc' suffix
         # Extract NARR grib file from tar file if it doesn't exist.
         if not os.path.exists(narr_grb):
@@ -227,6 +234,16 @@ def get(valid_time, targetdir='.', narrtype=narr3D, idir=idir, debug=False):
         subprocess.check_call(call_args)
     return narr 
 
+def get_ll(data):
+    lon, lat = data.gridlon_221, data.gridlat_221
+    # lon, lat = data.metpy.longitude, data.metpy.latitude # Thought about using metpy accessor, but I was warned "x" and "y" coordinates must je 1-D not 2-D in met-1.0 and beyond.
+    # subtract 360 from positive longitudes west of dateline or else you get straight spagehetti across the plot
+    # This fix may only work for NARR grid because all the problem points are in the northwest part of the grid
+    # and the northeast has no positive longitudes. Considered warning metpy developers about this, but I think it's
+    # a problem with the original grib or the way ncl_convert2nc converts it. 
+    lon = lon.where(lon<0,lon-360) # use xarray method instead of numpy to keep as xarray. (lat is still xarray)
+
+    return lon, lat
 
 def units(data, info, debug=False):
     if "units" in info:
@@ -275,6 +292,10 @@ def vertical(data, info, debug=False):
     if 'verttitle' not in data.attrs:
         data.attrs['verttitle'] = ''
 
+
+    # If data has a vertical coordinate dimension, select the appropriate
+    # level.
+
     if 'vertical' in info:
         vlevel = info['vertical']
         if hasattr(data.metpy, 'vertical'): 
@@ -291,9 +312,8 @@ def vertical(data, info, debug=False):
         elif len(data.shape) <= 2: # If data has only 2 dimensions assume it has no vertical dimension (like tropopause-level, or max-wind-level)
             if debug:
                 print('narr.vertical():',data.name,'is 2D already.')
-            if 'verttitle' not in data.attrs:
-                print('narr.vertical(): setting verttitle=',vlevel)
-                data.attrs['verttitle'] = vlevel
+            print('narr.vertical(): setting verttitle=',vlevel)
+            data.attrs['verttitle'] = vlevel
             return data
         else:
             # using list comprehension  # to get element with substring  
@@ -377,10 +397,10 @@ def shear(field, valid_time=None, targetdir=None, debug=False):
     dv.attrs['verttitle'] = vbot.attrs["verttitle"]+" to "+vtop.attrs["verttitle"]
     return du, dv
 
-def pressure_to_height(target_p, hgt3D, debug=False):
+def pressure_to_height(target_p, hgt3D, targetdir=".", debug=False):
   
     junktime = datetime.datetime(2015,1,1)
-    surface_height = scalardata('surface_height', junktime, debug=debug)
+    surface_height = scalardata('surface_height', junktime, targetdir=targetdir, debug=debug)
 
     lcl_height_MSL =  pressure_to_height_std(target_p)
     
@@ -434,7 +454,13 @@ def scalardata(field, valid_time, targetdir=".", debug=False):
 
     if debug:
         print("About to open "+ifile)
-    nc = xarray.open_dataset(ifile).metpy.parse_cf() # TODO: figure out why filled contour didn't have .metpy.parse_cf()
+    nc = xarray.open_dataset(ifile)
+    # Tried to rename vars and dimensions so metpy.parse_cf() would not warn "Found latitude/longitude values, assuming latitude_longitude for projection grid_mapping variable"
+    # It didn't help. Only commenting out the metpy.parse_cf() line helped.
+    # It didn't help with MetpyDeprecationWarning: Multidimensional coordinate lat assigned for axis "y". This behavior has been deprecated and will be removed in v1.0 (only one-dimensional coordinates will be available for the "y" axis) either
+    #nc = nc.rename_vars({"gridlat_221": "lat", "gridlon_221" : "lon"})
+    #nc = nc.rename_dims({"gridx_221": "x", "gridy_221" : "y"})
+    #nc = nc.metpy.parse_cf() # TODO: figure out why filled contour didn't have .metpy.parse_cf()
 
     if fvar not in nc.variables:
         print(fvar,"not in",ifile,'. Try', nc.var())
@@ -521,13 +547,14 @@ def scalardata(field, valid_time, targetdir=".", debug=False):
         ifile = get(valid_time, targetdir=targetdir, narrtype=narr3D)
         nc3D = xarray.open_dataset(ifile).metpy.parse_cf()
         hgt3D = nc3D["HGT_221_ISBL"] 
-        data = pressure_to_height(LCL_pressure, hgt3D)
+        data = pressure_to_height(LCL_pressure, hgt3D, targetdir=targetdir)
     else:
         data = nc[fvar]
     data = units(data, info, debug=debug)
     data = vertical(data, info, debug=debug)
     data = temporal(data, info, debug=debug)
 
+    data.attrs['field'] = field
     data.attrs['ifile'] = os.path.realpath(ifile)
     data.attrs['levels'] = levels
     data.attrs['cmap'] = cmap
@@ -547,6 +574,9 @@ def vectordata(field, valid_time, targetdir=".", combineuv=False, debug=False):
         pdb.set_trace()
     uname = 'u'+str(info['vertical'])
     vname = 'v'+str(info['vertical'])
+    # TODO: fix this hack
+    if uname == 'u10': uname = 'u10m' 
+    if vname == 'v10': vname = 'v10m' 
     u = scalardata(uname, valid_time, targetdir=targetdir, debug=debug)
     v = scalardata(vname, valid_time, targetdir=targetdir, debug=debug)
     if 'arrow' in info:
@@ -558,5 +588,6 @@ def vectordata(field, valid_time, targetdir=".", combineuv=False, debug=False):
         uv.attrs['long_name'] = 'wind vector'
         uv.name = uv.name.replace("U_GRD","UV_GRD") 
         uv.attrs['cmap'] = u.attrs['cmap']
+        uv.attrs['field'] = field # 'field' attribute should have been added to u and v separately in scalardata().
         return uv
     return u, v
