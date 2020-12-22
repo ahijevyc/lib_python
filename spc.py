@@ -369,7 +369,7 @@ def plotgridded(storm_reports, ax, gridlat2D=None, gridlon2D=None, scale=1, sigm
     return storm_rpts_gridded
 
 
-def polarplot(originlon, originlat, storm_reports, ax, zero_azimuth=0, scale=1.5, alpha=0.5, debug=False):
+def polarplot(originlon, originlat, storm_reports, ax, zero_azimuth=0, normalize_range_by_value=None, scale=1.5, alpha=0.5, debug=False):
 
     if storm_reports.empty:
         if debug:
@@ -393,6 +393,9 @@ def polarplot(originlon, originlat, storm_reports, ax, zero_azimuth=0, scale=1.5
             continue
         lons, lats = xrpts.slon.values, xrpts.slat.values
         r_km, heading = atcf.dist_bearing(originlon, originlat, lons, lats)
+        if normalize_range_by_value:
+            r_km = r_km * units("km") / normalize_range_by_value
+            r_km = r_km.m
         # Filter out points beyond the max range of axis
         maxr = ax.get_ylim()[1]
         if all(r_km >= maxr):
@@ -433,7 +436,7 @@ def plot(storm_reports, ax, scale=1, drawradius=0, alpha=0.5, debug=False):
             continue
         lons, lats = xrpts.slon.values, xrpts.slat.values
         storm_rpts_plot = ax.scatter(lons, lats, alpha = alpha, edgecolors="None", **kwdict[event_type],
-                transform=cartopy.crs.Geodetic())
+                transform=cartopy.crs.PlateCarree()) # ValueError: Invalid transform: Spherical scatter is not supported with crs.Geodetic
         storm_rpts_plots.append(storm_rpts_plot)
         if drawradius > 0:
             if debug:
