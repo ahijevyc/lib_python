@@ -25,41 +25,78 @@ def bss(obs, fcst):
     return 1.0 - (bs/climo)
 
 def reliability_diagram(ax, obs, fcst, base_rate=None, label="", n_bins=10, debug=False, **kwargs):
-    # allow lists
-    obs = np.array(obs)
-    fcst = np.array(fcst)
-    # calibration curve
-    true_prob, fcst_prob = calibration_curve(obs, fcst, n_bins=n_bins)
+    if obs is None or fcst is None:
+        # placeholder
+        p_list = ax.plot( [0], [0], "s-", label=label, **kwargs)
+    else:
+        # allow lists
+        obs = np.array(obs)
+        fcst = np.array(fcst)
+        # calibration curve
+        true_prob, fcst_prob = calibration_curve(obs, fcst, n_bins=n_bins)
+        bss_val = bss(obs, fcst)
+        if base_rate is None:
+            base_rate = obs.mean() # base rate
+        p_list = ax.plot( fcst_prob, true_prob, "s-", label="%s  bss:%1.4f" % (label, bss_val), **kwargs)
+        for x, f in zip(fcst_prob, true_prob):
+            if np.isnan(f): continue # avoid TypeError: ufunc 'isnan' not supported...
+            # label raw counts
+            ax.annotate("%1.4f" % f, xy=(x,f), xycoords=('data', 'data'), 
+                xytext = (0,1), textcoords='offset points', va='bottom', ha='center',
+                fontsize='xx-small')
+    p = p_list[0]
     one2oneline_label = "Perfectly calibrated"
     # If it is not a child already add perfectly calibrated line
     has_one2oneline = one2oneline_label in [x.get_label() for x in ax.get_lines()]
     if not has_one2oneline:
         one2oneline = ax.plot([0, 1], [0, 1], "k:", alpha=0.7, label=one2oneline_label)
-    bss_val = bss(obs, fcst)
-    if base_rate is None:
-        base_rate = obs.mean() # base rate
-    p_list = ax.plot( fcst_prob, true_prob, "s-", label="%s (%1.4f)" % (label, bss_val), **kwargs)
-    p = p_list[0]
-    noresline          = ax.axhline(y = base_rate, color=p.get_color(), linewidth=0.5, linestyle="dashed", dashes=(9,9))
-    noresline_vertical = ax.axvline(x = base_rate, color=p.get_color(), linewidth=0.5, linestyle="dashed", dashes=(9,9))
-    noskill_line = ax.plot([0, 1], [base_rate/2, (1+base_rate)/2], color=p.get_color(), linewidth=0.5)
-    for x, f in zip(fcst_prob, true_prob):
-        if np.isnan(f): continue # avoid TypeError: ufunc 'isnan' not supported...
-        # label raw counts
-        ax.annotate("%1.4f" % f, xy=(x,f), xycoords=('data', 'data'), 
-            xytext = (0,1), textcoords='offset points', va='bottom', ha='center',
-            fontsize='xx-small')
+    noskill_line = ax.plot([0, 1], [base_rate/2, (1+base_rate)/2], color=p.get_color(), linewidth=0.3, alpha=0.7)
+    baserateline          = ax.axhline(y = base_rate, color=p.get_color(), label=f"base rate {base_rate:.4f}", linewidth=0.5, linestyle="dashed", dashes=(9,9))
+    baserateline_vertical = ax.axvline(x = base_rate, color=p.get_color(), linewidth=0.5, linestyle="dashed", dashes=(9,9))
+
+    ax.set_ylabel("Observed fraction of positives")
+    ax.set_title("Reliability Diagram")
+    ax.legend(loc="upper left", fontsize="xx-small")
+    ax.grid(lw=0.5, alpha=0.5)
+    ax.set_xlim((0,1))
+
     return p_list
    
-def count_histogram(ax, obs, fcst, label="", n_bins=10, debug=False):
+def count_histogram(ax, fcst, label="", n_bins=10, debug=False):
+    ax.set_xlabel("Forecasted probability")
+    ax.set_ylabel("Count")
+    ax.grid(lw=0.5, alpha=0.5)
+    ax.set_axisbelow(True)
+    ax.set_yscale("log")
+    if fcst is None: return None
     # Histogram of counts
     h = ax.hist(fcst, bins=n_bins, label=label, histtype='step', lw=2, alpha=1, log=True)
     return h
 
-def ROC_curve(ax, obs, fcst, label="", n_bins=10, debug=False):
-    # ROC auc
-    if debug:
-        print("auc", auc)
+def ROC_curve(ax, obs, fcst, label="", sep=0.1, debug=False):
+    if obs is None or fcst is None:
+        # placeholders
+        r = ax.plot([0],[0], marker="+", linestyle="solid", label=label)
+        auc = None
+    else:
+        # ROC auc with threshold labels separated by sep
+        auc = metrics.roc_auc_score(obs, fcst)
+        if debug:
+            print("auc", auc)
+        pofd, pody, thresholds = metrics.roc_curve(obs, fcst)
+        r = ax.plot(pofd, pody, marker="+", linestyle="solid", label="%s  auc:%1.4f" % (label, auc))
+        auc = ax.fill_between(pofd, pody, alpha=0.2)
+        old_x, old_y = 0., 0.
+        for x, y, s in zip(pofd, pody, thresholds):
+            if ((x-old_x)**2+(y-old_y)**2.)**0.5 > sep:
+                # label thresholds on ROC curve
+                ax.annotate("%1.4f" % s, xy=(x,y), xycoords=('data', 'data'),
+                        xytext=(0,1), textcoords='offset points', va='baseline', ha='left',
+                        fontsize = 'xx-small')
+                old_x, old_y = x, y
+            else:
+                if debug:
+                    print(f"statisticplot.ROC_curve(): tossing {x},{y},{s} annotation. Too close to last label.")
     ax.set_title("ROC curve")
     no_skill_label = "no skill"
     # If it is not a child already add perfectly calibrated line
@@ -68,16 +105,8 @@ def ROC_curve(ax, obs, fcst, label="", n_bins=10, debug=False):
         no_skill_line = ax.plot([0, 1], [0, 1], "k:", alpha=0.7, linewidth=0.8, label=no_skill_label)
     ax.set_xlim((0,1))
     ax.set_ylim((0,1))
-    ax.set_xlabel("POFD")
-    ax.set_ylabel("PODY")
-    true_prob, fcst_prob = calibration_curve(obs, fcst, n_bins=n_bins)
-    auc = metrics.roc_auc_score(obs, fcst)
-    pofd, pody, _ = metrics.roc_curve(obs, fcst)
-    r = ax.plot(pofd, pody, marker="+", linestyle="solid", label="%s (%1.4f)" % (label, auc))
-    auc = ax.fill_between(pofd, pody, alpha=0.2)
-    for s, x, y in zip(fcst_prob, pofd, pody):
-        # label thresholds on ROC curve
-        ax.annotate("%1.4f" % s, xy=(x,y), xycoords=('data', 'data'),
-                xytext=(0,1), textcoords='offset points', va='baseline', ha='left',
-                fontsize = 'xx-small')
+    ax.set_xlabel("Prob of false detection")
+    ax.set_ylabel("Prob of true detection")
+    ax.grid(lw=0.5, alpha=0.5)
+    ax.legend(loc="lower right", fontsize="xx-small")
     return r, auc
