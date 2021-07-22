@@ -1,20 +1,20 @@
-from fieldinfo import fieldinfo, readNCLcm
-import os # for NCARG_ROOT
-import numpy as np
-import subprocess
-import pandas as pd # used to label values along 'uv' dimension of vector dataset
-import tarfile
-import pytz
-import re
-import pdb
-import xarray
 import datetime
-import sys
+from fieldinfo import fieldinfo, readNCLcm
 import glob
 from metpy.units import units as munits
 from metpy.calc import equivalent_potential_temperature, lcl, wind_speed, potential_temperature, significant_tornado, pressure_to_height_std, supercell_composite
 from metpy.interpolate import log_interpolate_1d
 import matplotlib.colors as colors
+import numpy as np
+import os # for NCARG_ROOT
+import pandas as pd # used to label values along 'uv' dimension of vector dataset
+import pdb
+import pytz
+import re
+import subprocess
+import sys
+import tarfile
+import xarray
 
 # (vartype, file_suffix)
 narrSfc = ('sfc', 'RS.sfc')
@@ -43,6 +43,9 @@ for plev in plevs:
         if plev == "10m":
             fieldinfo[f]['fname'] = ['U_GRD_221_HTGL', 'V_GRD_221_HTGL']
             fieldinfo[f]['filename'] = narrFlx
+        if ws == 'u' or ws == 'v': # wind component can be negative or positive
+            fieldinfo[f]['levels'] = range(-22,26,4)
+            fieldinfo[f]['cmap'] = readNCLcm('cmocean_balance')
         if ws == 'v':
             fieldinfo[f]['fname'].reverse() # put v-component first so scalardata method works
     sh = 'sh'+plev
@@ -127,18 +130,15 @@ fieldinfo['sh2']    = {'levels' : [0.5,1,2,4,8,12,14,16,17,18,19,20,21,22,23,24]
 fieldinfo['shlev1'] = {'levels' : [0.5,1,2,4,8,12,14,16,17,18,19,20,21,22,23,24], 'cmap':fieldinfo['td2']['cmap'], 'fname'  : ['SPF_H_221_HYBL'], 'filename':narrFlx, 'units':'g/kg'}
 fieldinfo['shr10_30']  = fieldinfo['speed10m'].copy()
 fieldinfo['shr10_30']['levels'] = range(0,54,3)
-del(fieldinfo['shr10_30']['vertical']) # shear is 2 levels. vertical is undefined
-fieldinfo['shr10_500'] = fieldinfo['shr10_30'].copy()
-fieldinfo['shr10_700'] = fieldinfo['shr10_30'].copy()
-fieldinfo['shr10_850'] = fieldinfo['shr10_30'].copy()
-fieldinfo['shr10_900'] = fieldinfo['shr10_30'].copy()
-fieldinfo['shr10_925'] = fieldinfo['shr10_30'].copy()
-fieldinfo['shr30_500'] = fieldinfo['shr10_30'].copy()
-fieldinfo['shr30_700'] = fieldinfo['shr10_30'].copy()
-fieldinfo['shr850_200'] = fieldinfo['shr10_30'].copy()
+#shrlev1_trop = wind shear between tropopause and lowest model level
+for shr in ['shr10_500', 'shr10_700', 'shr10_850', 'shr10_900', 'shr10_925', 'shr30_500', 'shr30_700', 'shr850_200', 'shrlev1_trop']:
+    fieldinfo[shr] = fieldinfo['shr10_30'].copy()
+    iu = shr.index('_')
+    top = shr[3:iu]
+    bot = shr[iu+1:]
+    fieldinfo[shr]['vertical'] = [top,bot]
 fieldinfo['shrtrop'] = {'levels':np.array([2,5,10,15,20,30,50])*1e-3, 'cmap': fieldinfo['speed700']['cmap'], 
                         'filename': narrFlx, 'fname': ['VWSH_221_TRO'], 'vertical':'tropopause'} # shear at tropopause. https://www.emc.ncep.noaa.gov/mmb/rreanl/faq.html 
-fieldinfo['shrlev1_trop'] = fieldinfo['shr10_700'].copy() # wind shear between tropopause and lowest model level
 fieldinfo['srh'] = fieldinfo['srh1'].copy()
 fieldinfo['srh']['levels'].extend([750])
 fieldinfo['srh']['cmap'].extend(readNCLcm('wind_17lev')[-6:-4])
@@ -166,6 +166,7 @@ fieldinfo['wcfluxconv'] = {'fname':['WCCONV_221_ISBY_acc3h'],'filename':narrFlx,
 fieldinfo['zlcl']['filename'] = narrFlx
 fieldinfo['zlcl']['fname'] = ['PRES_221_HTGL','TMP_221_HTGL','DPT_221_HTGL']
 fieldinfo['zlcl']['vertical'] = 2
+
 
 #######################################################################
 idir = "/glade/collections/rda/data/ds608.0/3HRLY/" # path to NARR
@@ -246,10 +247,11 @@ def get_ll(data):
     return lon, lat
 
 def units(data, info, debug=False):
+    data = data.metpy.quantify() # quantify in MetPy>=1
     if "units" in info:
         if debug:
             print("converting to "+info["units"])
-        data.metpy.convert_units(info["units"]) # Don't .sel(lv_HTGL3=10) before .metpy.convert_units('kt'). You get None in return.
+        data = data.metpy.convert_units(info["units"]) # Don't .sel(lv_HTGL3=10) before .metpy.convert_units('kt'). You get None in return.
     return data
 
 
@@ -292,9 +294,7 @@ def vertical(data, info, debug=False):
     if 'verttitle' not in data.attrs:
         data.attrs['verttitle'] = ''
 
-
-    # If data has a vertical coordinate dimension, select the appropriate
-    # level.
+    # If data has a vertical coordinate dimension, select the appropriate level.
 
     if 'vertical' in info:
         vlevel = info['vertical']
@@ -391,6 +391,10 @@ def shear(field, valid_time=None, targetdir=None, debug=False):
     dv =  vtop-vbot
     du.attrs = utop.attrs
     dv.attrs = vtop.attrs
+    if du.name is None: # xarray.DataArray.name used in vectordata()
+        du.name = utop.name
+    if dv.name is None:
+        dv.name = vtop.name
     du.attrs['long_name'] += ' shear'
     dv.attrs['long_name'] += ' shear'
     du.attrs['verttitle'] = ubot.attrs["verttitle"]+" to "+utop.attrs["verttitle"]
@@ -442,10 +446,10 @@ def pressure_to_height(target_p, hgt3D, targetdir=".", debug=False):
 def scalardata(field, valid_time, targetdir=".", debug=False):
     # Get color map, levels, and netCDF variable name appropriate for requested variable (from fieldinfo module).
     info = fieldinfo[field]
+    if not isinstance(info['cmap'], (colors.ListedColormap)):
+        info['cmap'] = colors.ListedColormap(info['cmap']) 
     if debug:
         print("scalardata: found",field,"fieldinfo:",info)
-    cmap = colors.ListedColormap(info['cmap'])
-    levels = info['levels']
     fvar = info['fname'][0]
 
 
@@ -477,32 +481,29 @@ def scalardata(field, valid_time, targetdir=".", debug=False):
         data.attrs['long_name'] = "wind speed"
     elif field[0:3] == 'shr' and '_' in field:
         du, dv = shear(field, valid_time=valid_time, targetdir=targetdir, debug=debug)
-        ws = wind_speed(du, dv)
-        attrs = {'long_name':'wind shear', 'units':str(ws.units), 'verttitle' :du.attrs["verttitle"]}
-        # Use .m magnitude because you can't transfer units of pint quantity to xarray numpy array (xarray.values)
-        data = xarray.DataArray(data=ws.m, dims=du.dims, coords=du.coords, name=field, attrs=attrs)
+        data = wind_speed(du, dv)
+        data.name = field
+        data.attrs.update({'long_name':'wind shear', 'verttitle' :du.attrs["verttitle"]})
     elif field == 'theta2':
         pres = nc[info['fname'][0]]
         temp = nc[info['fname'][1]]
-        data = pres # retain xarray metadata/coordinates
         theta = potential_temperature(pres, temp)
-        data.values = theta
-        data.attrs['units'] = str(theta.units)
-        data.attrs['long_name'] = 'potential temperature'
+        theta.attrs['long_name'] = 'potential temperature'
+        data = theta
     elif field == 'thetae2':
         pres = nc[info['fname'][0]]
         temp = nc[info['fname'][1]]
         dwpt = nc[info['fname'][2]]
-        data = pres # retain xarray metadata/coordinates
         thetae = equivalent_potential_temperature(pres, temp, dwpt)
-        data.values = thetae
-        data.attrs['units'] = str(thetae.units)
-        data.attrs['long_name'] = 'equivalent potential temperature'
+        thetae.attrs['long_name'] = 'equivalent potential temperature'
+        data = thetae
     elif field == 'scp' or field == 'stp' or field == 'tctp':
         cape = nc[info['fname'][0]]
         cin  = nc[info['fname'][1]]
         ifile = get(valid_time, targetdir=targetdir, narrtype=narrFlx)
-        ncFlx = xarray.open_dataset(ifile).metpy.parse_cf() 
+        ncFlx = xarray.open_dataset(ifile)
+        # metpy.parse_cf() would warn "Found latitude/longitude values, assuming latitude_longitude for projection grid_mapping variable"
+        #ncFlx = ncFlx.metpy.parse_cf() 
         srh  = ncFlx[info['fname'][2]]
         shear_layer = info['fname'][3]
         bulk_shear = scalardata(shear_layer, valid_time, targetdir=targetdir, debug=debug)
@@ -513,8 +514,8 @@ def scalardata(field, valid_time, targetdir=".", debug=False):
             cin_term = -40/cin
             cin_term = cin_term.where(cin < -40, other=1)
             scp = supercell_composite(cape, srh, bulk_shear) * cin_term.metpy.unit_array
-            attrs = {'units':str(scp.units), 'long_name': 'supercell composite parameter'}
-            data = xarray.DataArray(data=scp, dims=cape.dims, coords=cape.coords, name=field, attrs=attrs) 
+            attrs = {'long_name': 'supercell composite parameter'}
+            data = xarray.DataArray(data=scp, name=field, attrs=attrs) 
         if field == 'stp':
             cin_term = (200+cin)/150
             cin_term = cin_term.where(cin <= -50, other=1)
@@ -523,29 +524,34 @@ def scalardata(field, valid_time, targetdir=".", debug=False):
             # xarray.broadcast() makes them all multiple heights with same shape, so significant_tornado doesn't 
             # complain about expecting lat/lon 2 dimensions and getting 3 dimensions..
             (cape, lifted_condensation_level_height, srh, bulk_shear, cin_term) = xarray.broadcast(cape, lifted_condensation_level_height, srh, bulk_shear, cin_term)
+            # Caveat, NARR storm relative helicity (srh) is 0-3 km AGL, while STP expects 0-1 km AGL. 
+            # Tried to ignore non-finite elements to avoid RuntimeWarning: invalid value encountered in greater/less but couldn't use 2-d boolean indexing with cape
+            # cape and bulk_shear have different nans
             stp = significant_tornado(cape, lifted_condensation_level_height, srh, bulk_shear) * cin_term.metpy.unit_array
-            attrs = {'units':str(stp.units), 'long_name': 'significant tornado parameter', 'verttitle':lifted_condensation_level_height.attrs['verttitle']}
-            data = xarray.DataArray(data=stp, dims=cape.dims, coords=cape.coords, name=field, attrs=attrs) 
+            attrs = {'long_name': 'significant tornado parameter', 'verttitle':lifted_condensation_level_height.attrs['verttitle']}
+            data = xarray.DataArray(data=stp, name=field, attrs=attrs) 
         if field == 'tctp':
             tctp = srh/(40*munits['m**2/s**2']) * bulk_shear/(12*munits['m/s']) * (2000 - lifted_condensation_level_height)/(1400*munits.m)
-            # But NARR storm relative helicity (srh) is 0-3 km AGL, while original TCTP expects 0-1 km AGL. 
+            # NARR storm relative helicity (srh) is 0-3 km AGL, while original TCTP expects 0-1 km AGL. 
             # So the shear term is too large using the NARR srh. Normalize the srh term with a larger denominator. 
             # In STP, srh is normalized by 150 m**2/s**2. Use that.
             tctp_0_3kmsrh = srh/(150*munits['m**2/s**2']) * bulk_shear/(12*munits['m/s']) * (2000 - lifted_condensation_level_height)/(1400*munits.m)
-            attrs = {'units':'dimensionless', 'long_name': 'TC tornado parameter'}
-            data = xarray.DataArray(data=tctp_0_3kmsrh, dims=cape.dims, coords=cape.coords, name=field, attrs=attrs) 
+            attrs = {'long_name': 'TC tornado parameter'}
+            data = xarray.DataArray(data=tctp_0_3kmsrh, name=field, attrs=attrs) 
     elif field=='lcl':
         pres = nc[info['fname'][0]]
         temp = nc[info['fname'][1]]
         dwpt = nc[info['fname'][2]]
         LCL_pressure, LCL_temperature = lcl(pres.fillna(pres.mean()), temp.fillna(temp.mean()), dwpt.fillna(dwpt.mean()))
-        # convert units to string or xarray.DataArray.metpy.unit_array dies with ttributeError: 'NoneType' object has no attribute 'evaluate'
-        attrs = {"long_name":"lifted condensation level", "units" : str(LCL_pressure.units), "from":"metpy.calc.lcl"}
+        attrs = {"long_name":"lifted condensation level", "from":"metpy.calc.lcl"}
+        # assign coords and dims manually because LCL_pressure only has "dim_0", "dim_1", "dim_2". useless.
         data = xarray.DataArray(data = LCL_pressure, coords=pres.coords, dims=pres.dims, name='LCL', attrs=attrs)
     elif field=='zlcl':
         LCL_pressure = scalardata('lcl', valid_time, targetdir=targetdir, debug=debug)
         ifile = get(valid_time, targetdir=targetdir, narrtype=narr3D)
-        nc3D = xarray.open_dataset(ifile).metpy.parse_cf()
+        nc3D = xarray.open_dataset(ifile)
+        # metpy.parse_cf() would warn "Found latitude/longitude values, assuming latitude_longitude for projection grid_mapping variable"
+        # nc3D = nc3D.metpy.parse_cf()
         hgt3D = nc3D["HGT_221_ISBL"] 
         data = pressure_to_height(LCL_pressure, hgt3D, targetdir=targetdir)
     else:
@@ -556,12 +562,22 @@ def scalardata(field, valid_time, targetdir=".", debug=False):
 
     data.attrs['field'] = field
     data.attrs['ifile'] = os.path.realpath(ifile)
+    # use np.array to allow for levels to be a range
+    levels = np.array(info['levels'])
     data.attrs['levels'] = levels
-    data.attrs['cmap'] = cmap
+    data.attrs.update(info)
 
-    if data.min() > levels[-1] or data.max() < levels[0]:
-        print('levels',levels,'out of range of data', data.min(), data.max())
-        sys.exit(2)
+    if isinstance(data.data, munits.Quantity):
+        pass
+        # Used to Add units to levels array if data has units. 
+        # but this screwed up NARR_composite plt.savefig(). pint.errors.DimensionalityError: Cannot convert from 'degree_Celsius' to 'dimensionless'
+        #data.attrs['levels'] = data.attrs['levels'] * data.data.units
+    # Assume units of levels array is same as data.
+    if data.min() > (data.metpy.units * levels).max() or data.max() < (data.metpy.units * levels).min():
+        print('levels',levels,'out of range of data')
+        print(data.min())
+        print(data.max())
+        #sys.exit(2) # why exit with error? I can't remember.
 
     return data
 
@@ -572,22 +588,27 @@ def vectordata(field, valid_time, targetdir=".", combineuv=False, debug=False):
     if debug:
         print("vectordata(): found",field,"fieldinfo. Using",info)
         pdb.set_trace()
-    uname = 'u'+str(info['vertical'])
-    vname = 'v'+str(info['vertical'])
-    # TODO: fix this hack
-    if uname == 'u10': uname = 'u10m' 
-    if vname == 'v10': vname = 'v10m' 
-    u = scalardata(uname, valid_time, targetdir=targetdir, debug=debug)
-    v = scalardata(vname, valid_time, targetdir=targetdir, debug=debug)
+    if field[0:3] == "shr":
+        u,v = shear(field, valid_time, targetdir=targetdir, debug=debug)
+        u = temporal(u, info, debug=debug) # shear doesn't apply temporal like scalardata does.
+        v = temporal(v, info, debug=debug)
+    else:
+        uname = 'u'+str(info['vertical'])
+        vname = 'v'+str(info['vertical'])
+        # TODO: fix this hack
+        if uname == 'u10': uname = 'u10m' 
+        if vname == 'v10': vname = 'v10m' 
+        u = scalardata(uname, valid_time, targetdir=targetdir, debug=debug)
+        v = scalardata(vname, valid_time, targetdir=targetdir, debug=debug)
     if 'arrow' in info:
         u.attrs['arrow'] = True
         v.attrs['arrow'] = True
     if combineuv:
         # The second argument to concat can also be an Index or DataArray object as well as a string, in which case it is used to label the values along the new dimension:
         uv = xarray.concat([u,v],pd.Index(["u","v"], name='uv'))
-        uv.attrs['long_name'] = 'wind vector'
+        uv.attrs.update(info) # shear() doesn't copy over attributes like scalardata does
+        uv.attrs['long_name'] = u.attrs['long_name'].replace('u-component of ', '')
         uv.name = uv.name.replace("U_GRD","UV_GRD") 
-        uv.attrs['cmap'] = u.attrs['cmap']
         uv.attrs['field'] = field # 'field' attribute should have been added to u and v separately in scalardata().
         return uv
     return u, v
