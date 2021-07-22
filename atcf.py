@@ -138,6 +138,7 @@ def basins():
     return {
         "al": (-99,-22,0,38),
         "Gulf": (-100,-80,21.5,34),
+        "Michael2018": (-93,-80,21.5,34),
         "Irma": (-89,-70,20,34),
         "Irma1": (-81.1,-78.6,22.5,25.2),
         "ep": (-175,-94,0,34),
@@ -228,7 +229,7 @@ def V500c(Vmax_knots, latitude_degrees):
             climatological_tangential_wind_500_km_from_the_center[Vmax_knots < 15] = Vmax_knots[Vmax_knots < 15]
     return climatological_tangential_wind_500_km_from_the_center 
 
-def Knaff_Zehr_Pmin(Vsrm1_knots, storm_size_S, latitude_degrees, environmental_pressure_hPa):
+def Knaff_Zehr_Pmin(Vsrm1_knots, storm_size_S, latitude_degrees, environmental_pressure_hPa, debug=False):
     # Equation 1 in Courtney and Knaff http://rammb.cira.colostate.edu/resources/docs/Courtney&Knaff_2009.pdf
     Pc = 23.286 - 0.483 * Vsrm1_knots - ( Vsrm1_knots/24.254 )**2. - 12.587*storm_size_S - 0.483*latitude_degrees + environmental_pressure_hPa
     return Pc
@@ -237,6 +238,18 @@ def Vsrm(Vmax_knots, storm_motion_in_knots_C):
     # Replace NaN with zero.
     storm_motion_in_knots_C = storm_motion_in_knots_C.fillna(0)
     return Vmax_knots - 1.5 * storm_motion_in_knots_C**0.63
+
+
+def compare_ma(func, a, thresh):
+    if isinstance(a, np.ma.MaskedArray):
+        # Tried for hours to avoid RuntimeWarning: invalid value encountered in greater_equal
+        # But When doing a mathematical operation on a masked array, and some elements are invalid for the particular mathematical operation, 
+        # numpy issues warning even if all invalid elements are masked.
+        out = ~a.mask
+        out[out] = func(a[out] , thresh)
+    else:
+        out =  func(a, thresh)
+    return out
 
 
 def speed_heading(lon, lat, time):
@@ -339,18 +352,21 @@ def contrasting_color(color):
         return 'black'
     return 'white'
 
-def plot_track(start_label,group,end_label, scale=1, debug=False, label_interval_hours=1, **kwargs):
+def plot_track(ax, start_label,group,end_label, scale=1, debug=False, label_interval_hours=1, **kwargs):
     if debug:
         print("plot_track: "+start_label)
         print(group)
     group = group.sort_values("valid_time")
 
-    if plt.gca().projection.proj4_params["lon_0"] == 180:
+    if ax.projection.proj4_params["lon_0"] == 180:
         print("plot_track(): changing longitudes from -180,180 to 0,360")
         group.loc[group.lon<0,"lon"] += 360
 
     for i in range(0, len(group)):
         row = group.iloc[i]
+        TCcategory, color = kts2category(row.vmax)
+        if end_label == "BEST":
+            color = 'black'
         if i == 0:
             # first half-segment
             row_1 = group.iloc[i]
@@ -358,43 +374,47 @@ def plot_track(start_label,group,end_label, scale=1, debug=False, label_interval
                 row1 = group.iloc[i]
             else:
                 row1 = group.iloc[i+1]
-            plt.text(row.lon,row.lat, start_label, color='black', clip_on=True, 
+            ax.text(row.lon,row.lat, start_label, color='black', clip_box=ax.bbox, clip_on=True, 
                     ha='center', va='baseline', fontsize=7*scale, transform=cartopy.crs.PlateCarree())
         elif i == len(group)-1:
             # last half-segment
             row_1 = group.iloc[i-1]
             row1 = group.iloc[i]
-            plt.text(row.lon, row.lat, end_label, color='black', clip_on=True,
-                    ha='center', va='baseline', fontsize=7*scale, transform=cartopy.crs.PlateCarree())
+            # hide for now
+            #ax.text(row.lon, row.lat, end_label, color='black', clip_box=ax.bbox, clip_on=True,
+            #        ha='center', va='baseline', fontsize=7*scale, transform=cartopy.crs.PlateCarree())
         else:
             # middle segments
             row_1 = group.iloc[i-1]
             row1 = group.iloc[i+1]
+        if row.valid_time == datetime.datetime(2018,10,10,18):
+            ax.text(row.lon, row.lat, end_label, color="black", clip_box=ax.bbox, clip_on=True, 
+                ha='center',va='center_baseline',fontsize=10*scale, transform=cartopy.crs.PlateCarree())
         lat0 = (row_1.lat + row.lat) / 2.
         lon0 = (row_1.lon + row.lon) / 2. # TODO use circmean?
-        lw = 2.5 if row.vmax > 34 else 1
+        lw = 1.5
         lat1 = (row.lat + row1.lat) / 2.
         lon1 = (row.lon + row1.lon) / 2.
-        TCcategory, color = kts2category(row.vmax)
         if TCcategory == "TD" and row1.basin == 'TG':
             # IF this is TC genesis track and not a storm with TC vitals
             # use "OTHER (NON TD)" instead of "CLASSIFIED TD" color
             color = "white"
         if debug: print(i, "plot segment", [lon0,lon1],[lat0,lat1])
-        segment = plt.plot([lon0,row.lon,lon1],[lat0,row.lat,lat1], # Include middle point. Full segment is a bent line.
+        segment = ax.plot([lon0,row.lon,lon1],[lat0,row.lat,lat1], # Include middle point. Full segment is a bent line.
                 c=color, lw=lw*scale, transform=cartopy.crs.PlateCarree())
         if row.valid_time.hour % label_interval_hours == 0: # label if hour is multiple of label_interval_hours
-            format = "%-d"
+            lformat = "%-d"
             if row.valid_time.hour != 0:
-                format = "%-Hz"
-            plt.text(row.lon, row.lat, row.valid_time.strftime(format), color=contrasting_color(color), clip_on=True,
+                lformat = "%-Hz"
+            lformat = "" # hide for now
+            ax.text(row.lon, row.lat, row.valid_time.strftime(lformat), color=contrasting_color(color), clip_box=ax.bbox, clip_on=True, 
                 ha='center',va='center_baseline',fontsize=7*scale, transform=cartopy.crs.PlateCarree())
-        markersize = scale*8 if row.valid_time.hour == 0 else scale*4
-        plt.plot(row.lon, row.lat, 'o', markersize=markersize, markerfacecolor=color, color=color, transform=cartopy.crs.PlateCarree())
+        markersize = scale*8 if row.valid_time.hour == 0 else 0.
+        ax.plot(row.lon, row.lat, 'o', markersize=markersize, markerfacecolor=color, markeredgewidth=0.0, color=color, transform=cartopy.crs.PlateCarree())
     label = "track label description"
-    already_annotated = label in [x.get_label() for x in plt.gca().texts]
-    if not already_annotated:
-        plt.annotate(s = "day of month at hour 0", xy=(3,3), xycoords='axes pixels', fontsize=6, label=label)
+    already_annotated = label in [x.get_label() for x in ax.texts]
+    if lformat and not already_annotated:
+        ax.annotate(s = "day of month at hour 0", xy=(3,3), xycoords='axes pixels', fontsize=6, label=label)
 
 def TClegend(fig, left=94, up=32):
     # legend was screen-grabbed from tropicalatlantic.com
@@ -508,20 +528,22 @@ def stringlatlon2float(df, debug=False):
     return df
 
 
+def expand_wind_radii(df, debug=False):
+    df = df.set_index("rad").reindex(['0','34','50','64']).reset_index() # make sure full set of thresholds is defined. original dataframe may not have them all.
+    columns = list(df.columns)
+    for f in ["rad", "seas"]:
+        for r in ["1", "2", "3", "4"]:
+            columns.remove(f+r)
+    df[columns] = df[columns].fillna(axis='index', method='backfill')        
+    df[columns] = df[columns].fillna(axis='index', method='ffill')        
+    return df
 
-def return_expandedwindradii(df):
-    # Set append=True to avoid losing columns when you make them an index
-    df = df.set_index(['basin','cy','initial_time','model','fhr','rad'])
-    df.index.set_levels(['0','34','50','64'], inplace=True, level='rad') # make sure full set of thresholds is defined. original dataframe may not have them all.
-    mi = pd.MultiIndex.from_product(df.index.levels,names=df.index.names) # create MultiIndex with no missing rads.
-    # TODO: Correctly use fill method option when applying reindex method.
-    #       For example, with method='pad', it wrongly propagates forward previous time's values 
-    #       for 0-knot line (because 0-knot line didn't exist). Tried method='nearest' but
-    #       NotImplementedError: method='nearest' not implemented yet for MultiIndex; see GitHub issue 9365.
-    df = df.reindex(mi) # now there is a 0,34,50, and 64-knot line for each entry.
-    df = df.reset_index()  # and all the indexes are moved back to columns
-    df.loc[:,["rad1","rad2","rad3","rad4"]] = df[["rad1","rad2","rad3","rad4"]].fillna(value=0) # Make missing wind radii zero.
-    # Tried leaving as MultiIndex DataFrame but it led to all sorts of problems.
+def return_expandedwindradii(df, debug=False):
+    tracks = df.groupby(['basin','cy','initial_time','model','fhr'])
+    df = tracks.apply(expand_wind_radii, debug=debug)
+    df = df.reset_index(drop=True) # Don't need level_0 and level_1 columns in DataFrame
+    df[["rad1","rad2","rad3","rad4"]] = df[["rad1","rad2","rad3","rad4"]].fillna(value=0) # Make missing wind radii zero.
+    df[["seas1","seas2","seas3","seas4"]] = df[["seas1","seas2","seas3","seas4"]].fillna(value=0) # Make missing seas radii zero.
     return df
 
 # Return list of user-defined columns that are all empty.
@@ -712,12 +734,12 @@ def read(ifile = ifile, debug=False, fullcircle=False, expandwindradii=False):
         sys.exit(2)
 
     # Derive valid time.   valid_time = initial_time + fhr (used in read_aswip too)
-    df['valid_time'] = df.initial_time + pd.to_timedelta(df.fhr, unit='h')
+    df.loc[:,'valid_time'] = df.initial_time + pd.to_timedelta(df.fhr, unit='h')
     # add minutes for BEST tracks. 2-digit minutes are in the TECHNUM column for BEST tracks. TECHNUM means something else for non-BEST tracks and shouldn't be added like a timedelta.
     besttracks = df[df.model == 'BEST']
-    besttracks['valid_time']   +=  pd.to_timedelta(besttracks.technum.fillna(0), unit='minute')
-    besttracks['initial_time'] +=  pd.to_timedelta(besttracks.technum.fillna(0), unit='minute')
-    df[df.model == 'BEST'] = besttracks
+    besttracks.loc[:,'valid_time']   +=  pd.to_timedelta(besttracks.technum.fillna(0), unit='minute')
+    besttracks.loc[:,'initial_time'] +=  pd.to_timedelta(besttracks.technum.fillna(0), unit='minute')
+    df.loc[df.model == 'BEST'] = besttracks
 
 
 
@@ -868,26 +890,29 @@ def get_ext_of_wind(speed_kts, distance_km, bearing, raw_vmax_kts, quads=quads, 
     speed_kts = np.ma.array(speed_kts, mask = distance_km >= rad_search_radius_km)
 
     for wind_thresh_kts in thresh_kts[thresh_kts < raw_vmax_kts]:
-        ithresh = speed_kts >= wind_thresh_kts # Boolean array same shape
+        # Tried for hours to avoid RuntimeWarning: invalid value encountered in greater_equal
+        # But When doing a mathematical operation on a masked array, and some elements are invalid for the particular mathematical operation, 
+        # numpy issues warning even if all invalid elements are masked.
+        ithresh = compare_ma(np.greater_equal, speed_kts, wind_thresh_kts) # Boolean array same shape
         imax = np.argmax(distance_km * ithresh) # arg must be same shape as subscript target
         iedge = np.unravel_index(imax, distance_km.shape)
         # warn if max_dist_of_wind_threshold is on edge of 2-d domain (like nested WRF grid)
         if distance_km.ndim == 2:
             if debug:
-                print("imax:", imax)
-                print("iedge:", iedge)
+                print("get_ext_of_wind(): 1-D index of max wind radius imax:", imax)
+                print("get_ext_of_wind(): 2-D index iedge:", iedge)
             if iedge[0] == distance_km.shape[0]-1 or iedge[1] == distance_km.shape[1]-1 or any(iedge) == 0:
                 print("get_ext_of_wind(): R"+str(wind_thresh_kts)+" at edge of domain",iedge,"shape:",distance_km.shape)
         wind_radii_nm[wind_thresh_kts] = {}
         if debug:
             print('get_ext_of_wind(): method ' + wind_radii_method)
-            print('get_ext_of_wind(): kts quad azimuth npts    dist   bearing     lat     lon')
+            print('get_ext_of_wind(): kts quad azimuth npts   dist   bearing     lat     lon')
         for quad,az in quads.items():
             # Compute azimuthal mean
             if wind_radii_method == "azimuthal_mean":
                 # I thought I wouldn't need (distance_km < rad_search_radius_km) because speed_kts was masked beyond
                 # the search radius. But it makes a difference.
-                iquad = (az <= bearing) & (bearing < az+90) & (distance_km < rad_search_radius_km)
+                iquad = (az <= bearing) & (bearing < az+90) & compare_ma(np.less, distance_km, rad_search_radius_km)
                 speed_kts_vs_radius_km, radius_km = get_azimuthal_mean(speed_kts[iquad], distance_km[iquad], binsize_km = 25.)
                 wind_radii_nm[wind_thresh_kts][quad] = 0.
                 if any(speed_kts_vs_radius_km >= wind_thresh_kts):
@@ -895,14 +920,14 @@ def get_ext_of_wind(speed_kts, distance_km, bearing, raw_vmax_kts, quads=quads, 
                     wind_radii_nm[wind_thresh_kts][quad] = max_dist_of_wind_threshold_nm
                     if debug:
                         print('get_ext_of_wind():', "%3d "%wind_thresh_kts, quad, ' %3d-%3d'%(az,az+90), '%4d'%np.sum(iquad), 
-                              '%6.2fnm'%max_dist_of_wind_threshold_nm, end="")
+                              '%6.1fnm'%max_dist_of_wind_threshold_nm, end="")
                         print(radius_km)
                         print(speed_kts_vs_radius_km)
                         print()
             else:
                 # I thought I wouldn't need (distance_km < rad_search_radius_km) because speed_kts was masked beyond
                 # the search radius. But it makes a difference.
-                iquad = (az <= bearing) & (bearing < az+90) & (speed_kts >= wind_thresh_kts) & (distance_km < rad_search_radius_km)
+                iquad = (az <= bearing) & (bearing < az+90) & compare_ma(np.greater_equal, speed_kts, wind_thresh_kts) & compare_ma(np.less, distance_km, rad_search_radius_km)
                 wind_radii_nm[wind_thresh_kts][quad] = 0.
                 if np.sum(iquad) > 0:
                     x_km = distance_km[iquad]
@@ -969,7 +994,7 @@ def derived_winds(u10, v10, mslp, lonCell, latCell, row, vmax_search_radius=250.
     # Get radius of max wind
     raw_RMW_nm = distance_km[vmaxrad][ispeed_max] * km2nm
     if debug:
-        print('max wind lat', latCell[vmaxrad][ispeed_max], 'lon', lonCell[vmaxrad][ispeed_max])
+        print(f'max wind {latCell[vmaxrad][ispeed_max]:.2f}N {lonCell[vmaxrad][ispeed_max]:.2f}E {raw_RMW_nm:.1f}nm')
 
     # Restrict min mslp search
     mslprad = distance_km < mslp_search_radius
@@ -1195,14 +1220,17 @@ def write(ofile, df, fullcircle=False, append=False, debug=False):
     mode = "w"
     if append:
         mode = "a"
-    f = open(ofile, mode)
-    f.write(atcf_lines)
-
-    f.close()
-    if append:
-        print("appended to", ofile)
+    if ofile == "<stdout>":
+        sys.stdout.write(atcf_lines)
     else:
-        print("wrote", ofile)
+        f = open(ofile, mode)
+        f.write(atcf_lines)
+        f.close()
+
+        if append:
+            print("appended to", ofile)
+        else:
+            print("wrote", ofile)
 
 def origgridWRF(df, griddir, grid="d03", wind_radii_method = "max", debug=False):
     # Get vmax, minp, radius of max wind, max radii of wind thresholds from WRF by Alex Kowaleski
@@ -1412,7 +1440,7 @@ if __name__ == "__main__":
         for iveer, veer in enumerate(np.linspace(v0,v1,dv)): # deg / day
             veered_track_df = veer_track(track_df, veer, debug=debug)
             veered_track_df["model"] = "PF{:02.0f}".format(iveer)
-            plot_track("", veered_track_df, "{:3.1f}deg/day".format(veer), debug=debug)
+            plot_track(ax, "", veered_track_df, "{:3.1f}deg/day".format(veer), debug=debug)
             write(ofile+".dat", veered_track_df, append=True)
     l = TClegend(ax.figure, up=1, left=1)
     plt.savefig(ofile + ".png")
