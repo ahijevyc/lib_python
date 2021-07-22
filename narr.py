@@ -248,10 +248,11 @@ def get_ll(data):
 
 def units(data, info, debug=False):
     data = data.metpy.quantify() # quantify in MetPy>=1
-    if "units" in info:
-        if debug:
-            print("converting to "+info["units"])
-        data = data.metpy.convert_units(info["units"]) # Don't .sel(lv_HTGL3=10) before .metpy.convert_units('kt'). You get None in return.
+    assert "units" not in info # I think the metpy.quantify() method takes care of this but not sure. 
+    #if "units" in info:
+    #    if debug:
+    #        print("converting to "+info["units"])
+    #    data = data.metpy.convert_units(info["units"]) # Don't .sel(lv_HTGL3=10) before .metpy.convert_units('kt'). You get None in return.
     return data
 
 
