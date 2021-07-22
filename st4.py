@@ -1,13 +1,15 @@
-from shapely.geometry import Point, multipolygon
+import cartopy.io.shapereader as shpreader
 import datetime
-import pandas as pd
-import cartopy
-import pdb
 import matplotlib.path
 import numpy as np
+import pandas as pd
+import pdb
+from shapely.geometry import Point, multipolygon
 
 def pts_in_shp(lats, lons, shp, debug=False):
-    shape = cartopy.io.shapereader.Reader(shp)
+    # Map longitude to -180 to +180 range
+    lons = np.where(lons > 180, lons-360, lons)
+    shape = shpreader.Reader(shp)
     ll_array = np.hstack((lons.flatten()[:,np.newaxis],lats.flatten()[:,np.newaxis]))
     mask = np.full(lats.flatten().shape, False)
     # How to make shapefile for EAST_CONUS (CONUS east of 105W)
@@ -21,10 +23,13 @@ def pts_in_shp(lats, lons, shp, debug=False):
     # It is as simple as that.
 
     # This seems kind of hacky. Can you recurse through a mixture of Polygons and Multipolygons more elegantly?
+    # Tried geopandas read_shape . geometry but it was no more elegant.
     for g in shape.geometries():
+        if debug:
+            print(__name__, "pts_in_shp area", g.area)
         # How to deal with 3-D polygons (i.e. POLYGON Z)? some shape files are 3D.
         if g.has_z:
-            print("Uh oh. shape geometries have z-coordinate in",shp)
+            print("Uh oh. shape geometry has z-coordinate in",shp)
             print("I don't know how to process 3-D polygons (i.e. POLYGON Z).")
             sys.exit(1)
         if isinstance(g, multipolygon.MultiPolygon):
@@ -34,6 +39,7 @@ def pts_in_shp(lats, lons, shp, debug=False):
             mask = mask | matplotlib.path.Path(g.exterior.coords).contains_points(ll_array)
         if debug:
             print("pts_in_shp:", mask.sum(), "points")
+    shape.close()
     return np.reshape(mask, lats.shape)
 
 
@@ -41,7 +47,7 @@ def pts_in_shp(lats, lons, shp, debug=False):
 # used by read_st4.py and wrf_st4_stats.py
 def clean(df, shapefile, interval, debug=False):
 
-    shape = cartopy.io.shapereader.Reader(shapefile).geometries()
+    shape = shpreader.Reader(shapefile).geometries()
     # geometries() returns an iterator, which AFAIK, can only be used once
     # unless you convert it to a list.
     shape = list(shape)
