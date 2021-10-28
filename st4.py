@@ -2,6 +2,7 @@ import cartopy.io.shapereader as shpreader
 import datetime
 import matplotlib.path
 import numpy as np
+import os
 import pandas as pd
 import pdb
 from shapely.geometry import Point, multipolygon
@@ -9,6 +10,10 @@ from shapely.geometry import Point, multipolygon
 def pts_in_shp(lats, lons, shp, debug=False):
     # Map longitude to -180 to +180 range
     lons = np.where(lons > 180, lons-360, lons)
+    # If shp is a directory, point to .shp file of same name in it.
+    shp = shp.rstrip("/")
+    if os.path.isdir(shp):
+        shp = shp + "/" + os.path.basename(shp) + ".shp"
     shape = shpreader.Reader(shp)
     ll_array = np.hstack((lons.flatten()[:,np.newaxis],lats.flatten()[:,np.newaxis]))
     mask = np.full(lats.flatten().shape, False)
