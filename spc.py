@@ -405,6 +405,26 @@ def plotgridded(storm_reports, ax, gridlat2D=None, gridlon2D=None, scale=1, sigm
 
     return storm_rpts_gridded
 
+def get_event_type_from_label(event_type_plot):
+    event_type = event_type_plot.get_label()
+    event_type = event_type.split(" ")
+    event_type = "".join(event_type[:-1]) # leave off the (count) word at the end of the label
+    return event_type
+
+
+def centroid_polar(theta_deg, r, debug=False):
+    # locate centroid of this event type
+    east = r * np.sin(np.radians(theta_deg))
+    north = r * np.cos(np.radians(theta_deg))
+    if debug:
+        print(f"east {east} north {north}")
+    east = east.mean()
+    north = north.mean()
+    if debug:
+        print(f"east {east} north {north}")
+    az = np.degrees(np.arctan2(east,north))
+    r = np.sqrt(east**2 + north**2)
+    return az, r
 
 def polarplot(originlon, originlat, storm_reports, ax, zero_azimuth=0, normalize_range_by_value=None, scale=1.5, alpha=0.5, debug=False):
 
@@ -463,10 +483,16 @@ def polarplot(originlon, originlat, storm_reports, ax, zero_azimuth=0, normalize
         theta = (heading - zero_azimuth + 360 ) % 360
         ax.set_autoscale_on(False) # Don't rescale the axes with far-away reports (thought unneeded after filtering out pts beyond maxr, but symbol near maximum range autoscales axis to larger range.)
         storm_rpts_plot = ax.scatter(np.radians(theta), r_km, alpha = alpha, **kwdict[event_type])
+
+        az, r = centroid_polar(theta, r_km)
+
+        if debug:
+            print(f"centroid of {event_type} x,y {east:7.2f}km,{north:7.2f}km  az,r {az:5.1f}deg,{r:6.2f}km")
+
         storm_rpts_plots.append(storm_rpts_plot)
     return storm_rpts_plots
 
-def plot(storm_reports, ax, scale=1, drawradius=0, alpha=0.5, debug=False):
+def plot(storm_reports, ax, scale=1, drawrange=0, alpha=0.5, debug=False):
 
     if storm_reports.empty:
         # is this the right thing to return? what about empty list []? or rpts?
@@ -491,20 +517,20 @@ def plot(storm_reports, ax, scale=1, drawradius=0, alpha=0.5, debug=False):
         storm_rpts_plot = ax.scatter(lons, lats, alpha = alpha, edgecolors="None", **kwdict[event_type],
                 transform=cartopy.crs.PlateCarree()) # ValueError: Invalid transform: Spherical scatter is not supported with crs.Geodetic
         storm_rpts_plots.append(storm_rpts_plot)
-        if drawradius > 0:
+        if drawrange > 0:
             if debug:
                 print("about to draw tissot circles for "+event_type)
             # With lons and lats, specifying more than one dimension allows individual points to be drawn. 
             # Otherwise a grid of circles will be drawn.
             # It warns about using PlateCarree to approximate Geodetic. It still warps the circles
             # appropriately, so I think this is okay.
-            within_radius = ax.tissot(rad_km = drawradius.to("km").magnitude, lons=lons[np.newaxis], lats=lats[np.newaxis], 
-                facecolor=kwdict[event_type]["c"], alpha=0.4, label=str(drawradius)+" radius")
+            within_range = ax.tissot(rad_km = drawrange.to("km").magnitude, lons=lons[np.newaxis], lats=lats[np.newaxis], 
+                facecolor=kwdict[event_type]["c"], alpha=0.4, label=str(drawrange)+" range")
             # TODO: Legend does not support tissot cartopy.mpl.feature_artist.
             # A proxy artist may be used instead.
             # matplotlib.org/users/legend_guide.html#
             # creating-artists-specifically-for-adding-to-the-legend-aka-proxy-artists
-            # storm_rpts_plots.append(within_radius)
+            # storm_rpts_plots.append(within_range)
 
     return storm_rpts_plots
 
@@ -603,5 +629,4 @@ def events2met(df):
     df["QC_String"] = "NA"
     df["Observation_Value"] = df.TOR_F_SCALE
     print(df.to_string(columns=met_columns))
-
 
