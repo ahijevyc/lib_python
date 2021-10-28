@@ -1,7 +1,19 @@
 import pdb
 import numpy as np
+import scikitplot.metrics
 from sklearn.calibration import calibration_curve
 from sklearn import metrics
+
+
+# Use scikitplot.metrics.plot_roc - nice because has adds other blended ROC curves in it.
+def plot_roc(y_true, y_probas, **kwargs):
+    #Reorder y_probas columns to match order of categories in y_true
+    #plot_roc() expects alphabetical, but labels are probably ordered categories in a different order
+    new_column_order = np.argsort(y_true.cat.categories)
+    y_probas_new = y_probas[:, new_column_order]
+    return scikitplot.metrics.plot_roc(y_true, y_probas_new, **kwargs)
+
+
 
 def limits(stat):
     x = {
@@ -40,8 +52,8 @@ def reliability_diagram(ax, obs, fcst, base_rate=None, label="", n_bins=10, debu
         p_list = ax.plot( fcst_prob, true_prob, "s-", label="%s  bss:%1.4f" % (label, bss_val), **kwargs)
         for x, f in zip(fcst_prob, true_prob):
             if np.isnan(f): continue # avoid TypeError: ufunc 'isnan' not supported...
-            # label raw counts
-            ax.annotate("%1.4f" % f, xy=(x,f), xycoords=('data', 'data'), 
+            # label reliability points
+            ax.annotate("%1.3f" % f, xy=(x,f), xycoords=('data', 'data'), 
                 xytext = (0,1), textcoords='offset points', va='bottom', ha='center',
                 fontsize='xx-small')
     p = p_list[0]
@@ -62,7 +74,7 @@ def reliability_diagram(ax, obs, fcst, base_rate=None, label="", n_bins=10, debu
 
     return p_list
    
-def count_histogram(ax, fcst, label="", n_bins=10, debug=False):
+def count_histogram(ax, fcst, label="", n_bins=10, count_label=True, debug=False):
     ax.set_xlabel("Forecasted probability")
     ax.set_ylabel("Count")
     ax.grid(lw=0.5, alpha=0.5)
@@ -70,10 +82,16 @@ def count_histogram(ax, fcst, label="", n_bins=10, debug=False):
     ax.set_yscale("log")
     if fcst is None: return None
     # Histogram of counts
-    h = ax.hist(fcst, bins=n_bins, label=label, histtype='step', lw=2, alpha=1, log=True)
-    return h
+    counts, bins, patches = ax.hist(fcst, bins=n_bins, label=label, histtype='step', lw=2, alpha=1, log=True)
+    if count_label:
+        bin_centers = 0.5 * np.diff(bins) + bins[:-1]
+        for count, x in zip(counts, bin_centers):
+            # label raw counts
+            ax.annotate(str(int(count)), xy=(x,count), xycoords=('data', 'data'),
+                xytext = (0,-1), textcoords='offset points', va='top', ha='center', fontsize='xx-small')
+    return counts, bins, patches
 
-def ROC_curve(ax, obs, fcst, label="", sep=0.1, debug=False):
+def ROC_curve(ax, obs, fcst, label="", sep=0.1, plabel=True, fill=False, debug=False):
     if obs is None or fcst is None:
         # placeholders
         r = ax.plot([0],[0], marker="+", linestyle="solid", label=label)
@@ -84,25 +102,27 @@ def ROC_curve(ax, obs, fcst, label="", sep=0.1, debug=False):
         if debug:
             print("auc", auc)
         pofd, pody, thresholds = metrics.roc_curve(obs, fcst)
-        r = ax.plot(pofd, pody, marker="+", linestyle="solid", label="%s  auc:%1.4f" % (label, auc))
-        auc = ax.fill_between(pofd, pody, alpha=0.2)
-        old_x, old_y = 0., 0.
-        for x, y, s in zip(pofd, pody, thresholds):
-            if ((x-old_x)**2+(y-old_y)**2.)**0.5 > sep:
-                # label thresholds on ROC curve
-                ax.annotate("%1.4f" % s, xy=(x,y), xycoords=('data', 'data'),
-                        xytext=(0,1), textcoords='offset points', va='baseline', ha='left',
-                        fontsize = 'xx-small')
-                old_x, old_y = x, y
-            else:
-                if debug:
-                    print(f"statisticplot.ROC_curve(): tossing {x},{y},{s} annotation. Too close to last label.")
+        r = ax.plot(pofd, pody, marker="+", markersize=1/np.log10(len(pofd)), linestyle="solid", label="%s  auc:%1.4f" % (label, auc))
+        if fill:
+            auc = ax.fill_between(pofd, pody, alpha=0.2)
+        if plabel:
+            old_x, old_y = 0., 0.
+            for x, y, s in zip(pofd, pody, thresholds):
+                if ((x-old_x)**2+(y-old_y)**2.)**0.5 > sep:
+                    # label thresholds on ROC curve
+                    ax.annotate("%1.3f" % s, xy=(x,y), xycoords=('data', 'data'),
+                            xytext=(0,1), textcoords='offset points', va='baseline', ha='left',
+                            fontsize = 'xx-small')
+                    old_x, old_y = x, y
+                else:
+                    if debug:
+                        print(f"statisticplot.ROC_curve(): tossing {x},{y},{s} annotation. Too close to last label.")
     ax.set_title("ROC curve")
     no_skill_label = "no skill"
     # If it is not a child already add perfectly calibrated line
     has_no_skill_line = no_skill_label in [x.get_label() for x in ax.get_lines()]
     if not has_no_skill_line:
-        no_skill_line = ax.plot([0, 1], [0, 1], "k:", alpha=0.7, linewidth=0.8, label=no_skill_label)
+        no_skill_line = ax.plot([0, 1], [0, 1], "k:", alpha=0.7, label=no_skill_label)
     ax.set_xlim((0,1))
     ax.set_ylim((0,1))
     ax.set_xlabel("Prob of false detection")
