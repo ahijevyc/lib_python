@@ -10,12 +10,16 @@ def steering_flow(args = dict(stormname="Joaquin", storm_heading=45*units("degre
 
     # Ensure correct units for unit-unaware NCL script
     kwargs["storm_speed"] = kwargs["storm_speed"].to("m/s").m
+    kwargs["lat0"] = kwargs["lat0"].to("degrees_N").m
+    kwargs["lon0"] = kwargs["lon0"].to("degrees_E").m
+    kwargs["pbot"] = kwargs["pbot"].to("hPa").m
+    kwargs["ptop"] = kwargs["ptop"].to("hPa").m
+    kwargs["storm_heading"] = kwargs["storm_heading"].to("degrees").m
     # return Pandas Series with results of steering_flow.ncl
     # For example, wind_shear_heading, steering_flow_speed, etc. 
 
     # Replace default keyword arguments with provided ones (in kwargs dictionary). 
-    for k in kwargs:
-        args[k] = kwargs[k]
+    args.update(kwargs)
     arglist = ["ncl", "-Q"] # -Q Turn off echo of NCL version and copyright info
     if debug:
         arglist.remove("-Q")
@@ -33,7 +37,11 @@ def steering_flow(args = dict(stormname="Joaquin", storm_heading=45*units("degre
     arglist.append(nclscript)
     if debug:
         print("ncl.steering_flow():", arglist)
-    ncls = subprocess.run(arglist, stdout=subprocess.PIPE, encoding='utf-8')
+    # PIPE stderr to eliminate warnings from running ncl script. ncl script does not warn if you run from command line. And NCARG_ROOT looks ok.
+    # warning:Unable to load System Resource File /glade/work/ahijevyc/20201220_daa_casper/lib/python3.7/site-packages/PyNIO/ncarg/sysresfile
+    # warning:WorkstationClassInitialize:Unable to access rgb color database - named colors unsupported:[errno=2]
+    # warning:["Palette.c":1850]:NhlLoadColormapFiles: Invalid colormap directory: /glade/work/ahijevyc/20201220_daa_casper/lib/python3.7/site-packages/PyNIO/ncarg/colormaps
+    ncls = subprocess.run(arglist, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding='utf-8')
     if debug:
         print("ncl.steering_flow: exit code was %d" % ncls.returncode)
     if debug or len(ncls.stdout.split("\n")) > 10: # force print if there's more standard output than usual
