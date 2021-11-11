@@ -1,17 +1,17 @@
-from datetime import datetime, timedelta
-import argparse
 import matplotlib
 matplotlib.use("Agg") # Tried tkAgg for access to plt.show() interactivity but didn't work as user mpasrt with bad x11 connection
 import matplotlib.pyplot as plt
+import argparse
+import atcf
+from datetime import datetime, timedelta
+from metpy import units
 import pandas as pd
 import pdb
-import re
-import atcf
-import os
 import numpy as np
-from metpy import units
-import sys
+import os
+import re
 import requests
+import sys
 
 idir = '/glade/work/ahijevyc/share/ibtracs/'
 
@@ -222,9 +222,9 @@ def extension(stormname, season):
     x = {("ISAAC",2012): # first element is last position from ibtracs, then tracked manually in 700mb wind in NARR
             {"valid_time": [datetime(2012,9,1,6), datetime(2012,9,1,12), datetime(2012,9,1,15), datetime(2012,9,1,18), datetime(2012,9,1,21),
                                                   datetime(2012,9,2, 0), datetime(2012,9,2, 3), datetime(2012,9,2, 6), datetime(2012,9,2, 9)],
-             "lat"     : [ 38.4,  38.5,  38.7,  38.7,  38.6,  39.1,  38.7,  38.5,  38.9],
-             "lon"     : [-93.3, -93.6, -93.1, -93.0, -92.0, -91.7, -90.9, -90.6, -89.7],
-             "storm_size_S" : 1.0, # Does this make sense as a fill-in value?
+             "lat"     : [ 38.4,  38.5,  38.7,  38.7,  38.6,  39.1,  38.7,  38.5,  38.9] * units.units["degree_N"],
+             "lon"     : [-93.3, -93.6, -93.1, -93.0, -92.0, -91.7, -90.9, -90.6, -89.7] * units.units["degree_E"],
+             "storm_size_S" : 1.0, # Does this make sense as a fill-in value? for Vt500km, it does
             }
         }
 
