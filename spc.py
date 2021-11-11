@@ -405,28 +405,27 @@ def plotgridded(storm_reports, ax, gridlat2D=None, gridlon2D=None, scale=1, sigm
 
     return storm_rpts_gridded
 
-def get_event_type_from_label(event_type_plot):
-    event_type = event_type_plot.get_label()
-    event_type = event_type.split(" ")
-    event_type = "".join(event_type[:-1]) # leave off the (count) word at the end of the label
-    return event_type
-
-
 def centroid_polar(theta_deg, r, debug=False):
     # locate centroid of this event type
     east = r * np.sin(np.radians(theta_deg))
     north = r * np.cos(np.radians(theta_deg))
     if debug:
-        print(f"east {east} north {north}")
+        print(f"spc.centroid_polar(): east {east:.2f}")
+        print(f"spc.centroid_polar(): north {north:.2f}")
     east = east.mean()
     north = north.mean()
     if debug:
-        print(f"east {east} north {north}")
+        print(f"east mean {east:.2f} north mean {north:.2f}")
     az = np.degrees(np.arctan2(east,north))
     r = np.sqrt(east**2 + north**2)
+    if debug:
+        print(f"spc.centroid_polar(): x,y {east:7.2f},{north:7.2f}  az,r {az:5.1f},{r:6.2f}")
+
     return az, r
 
-def polarplot(originlon, originlat, storm_reports, ax, zero_azimuth=0, normalize_range_by_value=None, scale=1.5, alpha=0.5, debug=False):
+def polarplot(originlon, originlat, storm_reports, ax, zero_azimuth=0*units.deg, normalize_range_by=None, scale=1.5, alpha=0.5, debug=False):
+    # Return dictionary where key/value pairs are
+    # event_type : scatterplot
 
     if storm_reports.empty:
         if debug:
@@ -436,7 +435,7 @@ def polarplot(originlon, originlat, storm_reports, ax, zero_azimuth=0, normalize
 
     # Color, size, marker, and label of wind, hail, and tornado storm reports
     kwdict = symbol_dict(scale=scale)
-    storm_rpts_plots = []
+    storm_rpts_plots = {}
 
     geo = cartopy.geodesic.Geodesic()
 
@@ -450,46 +449,47 @@ def polarplot(originlon, originlat, storm_reports, ax, zero_azimuth=0, normalize
             print("spc.polarplot(): found",len(xrpts),event_type,"reports")
         if len(xrpts) == 0:
             continue
-        lons, lats = xrpts.slon.values, xrpts.slat.values
-        r_km, heading = atcf.dist_bearing(originlon, originlat, lons, lats)
-        n3 = geo.inverse((originlon, originlat), np.column_stack((lons, lats)))
+        lons, lats = xrpts.slon.values*units["degrees_E"], xrpts.slat.values*units["degrees_N"]
+        r, heading = atcf.dist_bearing(originlon, originlat, lons, lats)
+        # Use .m because geo.inverse does not work with quantities.
+        n3 = geo.inverse((originlon.m, originlat.m), np.column_stack((lons.m, lats.m)))
         n3 = np.asarray(n3) # convert cartopy MemoryView to ndarray
-        r_km_geo = n3[:,0]/1000.
-        start_heading = n3[:,1]
-        start_heading[start_heading < 0] += 360.
-        if (np.abs(r_km - r_km_geo).max() > 5):
-            print("spc.polarplot(): distances", r_km, r_km_geo)
-            if (np.abs(r_km - r_km_geo).max() > 10):
+        r_geo = n3[:,0] * units.m 
+        start_heading = n3[:,1] * units.deg
+        start_heading[start_heading < 0] += (360*units.deg) # important to have units.deg on 360 or else it assumes 360 radians. 
+        if (np.abs(r - r_geo).max() > 5*units.km):
+            print("spc.polarplot(): distances", r, r_geo)
+            if (np.abs(r - r_geo).max() > 10*units.km):
                 pdb.set_trace()
-        if (np.abs(heading - start_heading).max() > 2):
+        if (np.abs(heading - start_heading).max() > 2*units.deg):
             print("spc.polarplot(): headings", heading, start_heading)
-            if (np.abs(heading - start_heading).max() > 5):
-                pdb.set_trace()
-        if normalize_range_by_value:
-            r_km = r_km * units("km") / normalize_range_by_value
-            r_km = r_km.m
+            assert np.abs(heading - start_heading).max() <= 5*units.deg, "spc.polarplot(): heading-start_heading > 5deg"
+        if normalize_range_by:
+            r = r / normalize_range_by
         # Filter out points beyond the max range of axis
-        maxr = ax.get_ylim()[1]
-        if all(r_km >= maxr):
+        assert not ax.have_units(), 'spc.polarplot() found axes units. Assumed yaxis has no attached units, but is km'
+        maxr = ax.get_ylim()[1] * units.km
+        if all(r >= maxr):
             if debug:
                 print("spc.polarplot():",event_type,"reports all outside axis range.")
             continue
-        inrange = r_km < maxr
-        r_km = r_km[inrange]
+        inrange = r < maxr
+        r = r[inrange]
         heading = heading[inrange]
         if debug:
             print("spc.polarplot(): found",inrange.sum(),event_type,"reports inside axis range")
         kwdict[event_type]["label"] += " (%d)" % inrange.sum()
-        theta = (heading - zero_azimuth + 360 ) % 360
+        theta = (heading - zero_azimuth + 360*units.deg ) % (360*units.deg)
         ax.set_autoscale_on(False) # Don't rescale the axes with far-away reports (thought unneeded after filtering out pts beyond maxr, but symbol near maximum range autoscales axis to larger range.)
-        storm_rpts_plot = ax.scatter(np.radians(theta), r_km, alpha = alpha, **kwdict[event_type])
+        # Feed axes.scatter magnitudes, not quantities. Quantities are clever but axes.scatter uses their units as axes labels. Not good for polar plot.
+        # Also, if I use quantities, the 2nd cfill plot errors out deep in matplotlib:     Nx = X.shape[-1] AttributeError: 'list' object has no attribute 'shape'
+        storm_rpts_plot = ax.scatter(np.radians(theta).m, r.m, alpha = alpha, **kwdict[event_type])
+        storm_rpts_plot.axes.set_xlabel('') # in case you figure out how to pass quantities to ax.scatter()
+        storm_rpts_plot.axes.set_ylabel('')
 
-        az, r = centroid_polar(theta, r_km)
+        az, r = centroid_polar(theta, r, debug=debug)
 
-        if debug:
-            print(f"centroid of {event_type} x,y {east:7.2f}km,{north:7.2f}km  az,r {az:5.1f}deg,{r:6.2f}km")
-
-        storm_rpts_plots.append(storm_rpts_plot)
+        storm_rpts_plots[event_type] = storm_rpts_plot
     return storm_rpts_plots
 
 def plot(storm_reports, ax, scale=1, drawrange=0, alpha=0.5, debug=False):
@@ -502,7 +502,7 @@ def plot(storm_reports, ax, scale=1, drawrange=0, alpha=0.5, debug=False):
 
     # Color, size, marker, and label of wind, hail, and tornado storm reports
     kwdict = symbol_dict(scale=scale)
-    storm_rpts_plots = []
+    storm_rpts_plots = {}
 
     for event_type in ["wind", "high wind", "hail", "large hail", "torn"]:
         if debug:
@@ -516,7 +516,7 @@ def plot(storm_reports, ax, scale=1, drawrange=0, alpha=0.5, debug=False):
         lons, lats = xrpts.slon.values, xrpts.slat.values
         storm_rpts_plot = ax.scatter(lons, lats, alpha = alpha, edgecolors="None", **kwdict[event_type],
                 transform=cartopy.crs.PlateCarree()) # ValueError: Invalid transform: Spherical scatter is not supported with crs.Geodetic
-        storm_rpts_plots.append(storm_rpts_plot)
+        storm_rpts_plots[event_type] = storm_rpts_plot
         if drawrange > 0:
             if debug:
                 print("about to draw tissot circles for "+event_type)
