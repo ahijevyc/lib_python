@@ -1,13 +1,14 @@
-import pandas as pd
-import sys
-from netCDF4 import Dataset
-import datetime
-import numpy as np
-import pdb
-import os
-import re
 import atcf
+import datetime
 from fieldinfo import fieldinfo,readNCLcm
+from netCDF4 import Dataset
+import numpy as np
+import os
+import pandas as pd
+import pdb
+import re
+import sys
+import xarray
 
 def get_diag_name(valid_time, prefix='diag.', suffix='.nc'):
     diag_name = prefix + valid_time.strftime("%Y-%m-%d_%H.%M.%S") + suffix
@@ -29,14 +30,12 @@ def origmesh(df, initfile, diagdir, wind_radii_method="max", debug=False):
     if isinstance(initfile, str):
         if debug:
             print("reading lat/lon from", initfile)
-        init = Dataset(initfile,"r")
-        lonCellrad = init.variables['lonCell'][:]
-        latCellrad = init.variables['latCell'][:]
-        lonCell = np.degrees(lonCellrad)
-        latCell = np.degrees(latCellrad)
+        init = xarray.open_dataset(initfile)
+        lonCell = init['lonCell'].metpy.convert_units("degrees")
+        latCell = init['latCell'].metpy.convert_units("degrees")
         lonCell[lonCell >= 180] = lonCell[lonCell >=180] - 360.
-        nEdgesOnCell = init.variables['nEdgesOnCell'][:]
-        cellsOnCell = init.variables['cellsOnCell'][:]
+        nEdgesOnCell = init['nEdgesOnCell']
+        cellsOnCell = init['cellsOnCell']
         init.close()
         initfile = {
                 "initfile":initfile,
@@ -59,15 +58,12 @@ def origmesh(df, initfile, diagdir, wind_radii_method="max", debug=False):
 
         diagfile = diagdir+diagfile
         if debug: print("reading diagfile", diagfile)
-        nc = Dataset(diagfile, "r")
-
-        u10  = nc.variables['u10'][itime,:]
-        v10  = nc.variables['v10'][itime,:]
-        mslp = nc.variables['mslp'][itime,:]
-        nc.close()
+        ds = xarray.open_dataset(diagfile)
+        ds = ds[['u10','v10','mslp']].metpy.quantify() # Don't choke on 'dBZ' not defined in unit registry
+        ds = ds.isel(Time=itime)
 
         # Extract vmax, RMW, minp, and radii of wind thresholds
-        derived_winds_dict = atcf.derived_winds(u10, v10, mslp, lonCell, latCell, row, wind_radii_method=wind_radii_method, debug=debug)
+        derived_winds_dict = atcf.derived_winds(ds.u10, ds.v10, ds.mslp, lonCell, latCell, row, wind_radii_method=wind_radii_method, debug=debug)
 
         # TODO: figure out how to replace the row with (possibly) multiple rows with different wind radii
         # without passing df, the entire DataFrame
