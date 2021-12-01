@@ -14,9 +14,32 @@ def get_diag_name(valid_time, prefix='diag.', suffix='.nc'):
     diag_name = prefix + valid_time.strftime("%Y-%m-%d_%H.%M.%S") + suffix
     return diag_name
 
-def origmesh(df, initfile, diagdir, wind_radii_method="max", debug=False):
+def raw_vitals(row, diagdir, lonCell, latCell, wind_radii_method=None, debug=False):
+    row = row.head(1).squeeze() # make multiple rad lines one series
+    assert 'originalmeshfile' not in row, f"{row} already has original mesh vitals"
+    diagfile = get_diag_name(row.valid_time, prefix='diag.', suffix='.nc')
 
-    # Get raw values from MPAS mesh
+    diagfile = os.path.join(diagdir,diagfile)
+    if debug: print("reading diagfile", diagfile)
+    ds = xarray.open_dataset(diagfile)
+    ds = ds[['u10','v10','mslp']].metpy.quantify() # Don't choke on 'dBZ' not defined in unit registry
+    ds = ds.isel(Time=0)
+
+    # Extract vmax, RMW, minp, and radii of wind thresholds
+    derived_winds_dict = atcf.derived_winds(ds.u10, ds.v10, ds.mslp, lonCell, latCell, row, wind_radii_method=wind_radii_method, debug=debug)
+    row = atcf.unitless_row(derived_winds_dict, row)
+
+    row["originalmeshfile"] = diagfile
+    # replace the row with (possibly) multiple rows with different wind radii (34/50/64 knot) 
+    row = atcf.add_wind_rad_lines(row, derived_winds_dict["wind_radii"], debug=debug)
+    return row
+
+
+def origmesh(df, initfile, diagdir, wind_radii_method="max", debug=False):
+    # assert this is a single track
+    assert df.groupby(['basin','cy','initial_time','model']).ngroups == 1, 'mpas.origmesh got more than 1 track'
+
+    # Get raw values from MPAS mesh for one track
 
     # input 
     # df = pandas Dataframe version of atcf data
@@ -34,44 +57,22 @@ def origmesh(df, initfile, diagdir, wind_radii_method="max", debug=False):
         lonCell = init['lonCell'].metpy.convert_units("degrees")
         latCell = init['latCell'].metpy.convert_units("degrees")
         lonCell[lonCell >= 180] = lonCell[lonCell >=180] - 360.
-        nEdgesOnCell = init['nEdgesOnCell']
-        cellsOnCell = init['cellsOnCell']
         init.close()
         initfile = {
                 "initfile":initfile,
                 "lonCell":lonCell,
                 "latCell":latCell,
-                "nEdgesOnCell":nEdgesOnCell,
-                "cellsOnCell":cellsOnCell
                 }
     else:
         if debug:
             print("reading lat/lon from dictionary")
         lonCell = initfile["lonCell"]
         latCell = initfile["latCell"]
-        nEdgesOnCell = initfile["nEdgesOnCell"]
-        cellsOnCell = initfile["cellsOnCell"]
-    
-    itime = 0
-    for index, row in df.iterrows():
-        diagfile = get_diag_name(row.valid_time, prefix='diag.', suffix='.nc')
 
-        diagfile = diagdir+diagfile
-        if debug: print("reading diagfile", diagfile)
-        ds = xarray.open_dataset(diagfile)
-        ds = ds[['u10','v10','mslp']].metpy.quantify() # Don't choke on 'dBZ' not defined in unit registry
-        ds = ds.isel(Time=itime)
-
-        # Extract vmax, RMW, minp, and radii of wind thresholds
-        derived_winds_dict = atcf.derived_winds(ds.u10, ds.v10, ds.mslp, lonCell, latCell, row, wind_radii_method=wind_radii_method, debug=debug)
-
-        # TODO: figure out how to replace the row with (possibly) multiple rows with different wind radii
-        # without passing df, the entire DataFrame
-        #df = atcf.update_df(df, row, raw_vmax_kts, raw_RMW_nm, raw_minp, wind_radii_nm, debug=debug)
-        df = atcf.update_df(df, row.initial_time, row.model, row.fhr, derived_winds_dict, gridfile=diagfile, debug=debug)
-    if debug:
-        print("mpas.origmesh() pausing before return")
-        pdb.set_trace()
+    # Only groupby 'fhr'. This should already be a single unique track.
+    df = df.groupby('fhr').apply(raw_vitals,diagdir,lonCell,latCell,wind_radii_method=wind_radii_method,debug=debug)
+    # don't return with fhr as index
+    df = df.droplevel('fhr')
     return df, initfile
 
 
