@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 import argparse
 import atcf
 from datetime import datetime, timedelta
-from metpy import units
 import pandas as pd
 import pdb
 import numpy as np
@@ -57,10 +56,11 @@ def ibtracs_to_atcf(df, debug=False):
             "USA_SEARAD_NW" : "seas4",
             "WMO_WIND"      : "vmax",
             }
-    df.rename(columns = column_match, inplace=True)
+
+    df = df.rename(columns = column_match)
 
     # Fill in nan vmax from WMO_WIND with USA_WIND
-    df["vmax"].fillna(df["USA_WIND"], inplace=True)
+    df["vmax"] = df["vmax"].fillna(df["USA_WIND"])
 
     df["valid_time"] = pd.to_datetime(df["valid_time"])
     df["initial_time"] = df["valid_time"]
@@ -83,6 +83,7 @@ def ibtracs_to_atcf(df, debug=False):
     # The column names go under "rad"
     # and the values of USA_R34_NE, USA_R50_NE, and USA_R64_NE go under "rad1".
     df = df.melt(id_vars=id_vars, var_name="rad", value_name="rad1")
+    df = df.sort_values("valid_time") # or else they are scattered by .melt function
     # change string values "USA_R34_NE", "USA_R50_NE", and "USA_R64_NE" to "34", "50", and "64".
     df.rad = df.rad.str[5:7]
     # make 3 new empty columns to hold SE, SW, and NW quadrants wind radii
@@ -110,6 +111,7 @@ def get_atcf(stormname, year, version="04r00", basin="", debug=False):
 
     dtype = {
             'BASIN':str,
+            'NUMBER':str,
             'DS824_STAGE': str,
             'HKO_CAT'  : str,
             'LAT': float, 
@@ -119,11 +121,11 @@ def get_atcf(stormname, year, version="04r00", basin="", debug=False):
             'NEUMANN_CLASS': str, 
             'USA_AGENCY': str, 
             'USA_ATCF_ID': str, 
-            'USA_GUST': str, 
+            'USA_GUST': float, 
             'USA_LAT': float, 
             'USA_LON': float, 
             'USA_RECORD': str, 
-            'USA_SEAHGT': str,
+            'USA_SEAHGT': float,
             'USA_STATUS': str,
             'WMO_AGENCY':str
             }
@@ -157,6 +159,8 @@ def get_atcf(stormname, year, version="04r00", basin="", debug=False):
         open(ifile, "wb").write(myfile.content)
     # keep_default_na=False . we don't want "NA" or North Atlantic to be treated as NA/NaN.
     # If skipinitialspace=True, add empty string to list of na_values. or you get TypeError. can't convert string to float64.
+    if debug:
+        print("read", ifile)
     df = pd.read_csv(ifile, delimiter=',', skipinitialspace=True, header=[0,1], na_values=na_values, keep_default_na=False, dtype=dtype)
     if debug:
         print("ibtracs.get_atcf(): read",len(df),"lines from",ifile)
@@ -173,16 +177,16 @@ def get_atcf(stormname, year, version="04r00", basin="", debug=False):
             column_units[column] = unit.lower()
     df = df.droplevel(1, axis='columns')
 
-    #df = units.pandas_dataframe_to_unit_arrays(df, column_units=column_units) # creates a "united array" which is a dictionary. what use is that?
+    #df = units.pandas_dataframe_to_unit_arrays(df, column_units=column_units) # creates a "unit-ed array" which is a dictionary. what use is that?
     imatch = (df['NAME'].str.upper() == stormname.upper()) & (df['SEASON'].astype(str) == str(year))
     if imatch.sum() == 0:
-        print("No",stormname.upper(), year,"in ibtracs.")
+        print(f"No {stormname.upper()} {year} in ibtracs {ifile}.")
         pdb.set_trace()
     df = df[imatch]
 
     # sanity check - are the wmo and usa lat/lons similar?
-    assert (df["LAT"]-df["USA_LAT"]).abs().max() < 0.2
-    assert (df["LON"]-df["USA_LON"]).abs().max() < 0.2
+    assert (df["LAT"]-df["USA_LAT"]).abs().max() < 0.2, "wmo and usa latitudes differ a lot"
+    assert (df["LON"]-df["USA_LON"]).abs().max() < 0.2, "wmo and usa longitudes differ a lot"
 
     df = ibtracs_to_atcf(df)
     if debug:
@@ -215,6 +219,7 @@ def get_stormname_from_atcfname(atcf_filename, version="04r00_20200308", debug=F
         sys.exit(1)
 
 def extension(stormname, season):
+    from metpy import units # this is so slow. Only used here.
     # capitalize stormnames in extension dictionary
     inkey = (stormname.upper(), int(season))
     # TODO: Grab last time, lat, lon from ibtracs, not hard coded values.
@@ -248,21 +253,29 @@ def main():
     parser.add_argument("stormname", help="storm name")
     parser.add_argument("season", help="season (year)")
     parser.add_argument("-b", "--basin", type=str, default="al", help="basin")
-    parser.add_argument("-o", "--out", default=".", help="Output path")
+    parser.add_argument("-d", "--debug", action="store_true", help="debug mode")
+    parser.add_argument("-o", "--outdir", default=".", help="Output path")
     args = parser.parse_args()
-    stormname = args.stormname
+    debug = args.debug
+    stormname = args.stormname.upper()
     season = args.season
+    png = os.path.realpath(os.path.join(args.outdir, stormname+season+".png"))
+    dat = os.path.realpath(os.path.join(args.outdir, stormname+season+".dat"))
+    if (os.path.exists(png)):
+        print("found",png," Exiting")
+        sys.exit(1)
+    if (os.path.exists(dat)):
+        print("found",dat," Exiting")
+        sys.exit(1)
     ax = atcf.get_ax()
-    track_df, ifile = get_atcf(stormname, season, basin=args.basin)
+    track_df, ifile = get_atcf(stormname, season, basin=args.basin, debug=debug)
+    atcf.write(dat, track_df)
+    print("created ",dat)
     start_label=""
     end_label=""
-    atcf.plot_track(start_label, track_df, end_label)
-    ofile = os.path.join(args.out, stormname+season+".png")
-    if (os.path.exists(ofile)):
-        print("found",ofile," Exiting")
-    else:
-        plt.savefig(ofile)
-        print("created ",ofile)
+    atcf.plot_track(ax, start_label, track_df, end_label, label_interval_hours=12)
+    plt.savefig(png)
+    print("created ",png)
 
 if __name__ == "__main__":
     main()
