@@ -446,9 +446,11 @@ def V500c(Vmax, latitude_degrees):
 
 def Knaff_Zehr_Pmin(Vsrm1, storm_size_S, latitude_degrees, environmental_pressure, debug=False):
     # Equation 1 in Courtney and Knaff http://rammb.cira.colostate.edu/resources/docs/Courtney&Knaff_2009.pdf
-    environmental_pressure_hPa = environmental_pressure.to("hPa").m
-    Vsrm1_knots = Vsrm1.to("knots").m
-    Pc = 23.286 - 0.483 * Vsrm1_knots - ( Vsrm1_knots/24.254 )**2. - 12.587*storm_size_S - 0.483*latitude_degrees + environmental_pressure_hPa
+    #environmental_pressure_hPa = environmental_pressure.to("hPa").m
+    #Vsrm1_knots = Vsrm1.to("knots").m
+    #Pc = 23.286 - 0.483 * Vsrm1_knots - ( Vsrm1_knots/24.254 )**2. - 12.587*storm_size_S - 0.483*latitude_degrees + environmental_pressure_hPa
+    # unitize coefficients so Vsrm1, latitude, environmental_pressure can be in any units
+    Pc = 23.286*units["hPa"] - 0.483*units["hPa/knot"] * Vsrm1 - ( Vsrm1/(24.254*units["knot * hPa**-0.5"]) )**2. - 12.587*units["hPa"]*storm_size_S - 0.483*units["hPa/degrees_N"]*latitude_degrees + environmental_pressure
     return Pc
 
 def Vsrm(Vmax, storm_motion_C):
@@ -702,23 +704,22 @@ def stringlatlon2float(df, debug=False):
     return df
 
 
+# rad1-4 and seas1-4 columns
+rscols = []
+for f in ["rad", "seas"]:
+    for r in ["1", "2", "3", "4"]:
+        rscols.append(f+r)
+        
 def expand_wind_radii(df, rads=['34','50','64'], debug=False):
-    df = df.set_index("rad").reindex(rads).reset_index() # make sure full set of thresholds is defined. original dataframe may not have them all.
-    columns = list(df.columns)
-    # Remove rad1-4 and seas1-seas4 from list. Don't fillna rad1-4 or seas1-4
-    for f in ["rad", "seas"]:
-        for r in ["1", "2", "3", "4"]:
-            columns.remove(f+r)
-    df[columns] = df[columns].fillna(axis='index', method='backfill')        
-    df[columns] = df[columns].fillna(axis='index', method='ffill')        
+    df = df.set_index("rad").reindex(rads) # make sure full set of thresholds is defined. original dataframe may not have them all.
+    df[rscols] = df[rscols].fillna(value=0) # fill missing rad1-4 and seas1-4 with zeros
+    df = df.fillna(method='ffill')
     return df
 
 def return_expandedwindradii(df, rads=["34","50","64"], debug=False):
-    tracktimes = df.groupby(['basin','cy','initial_time','model','fhr'])
+    tracktimes = df.groupby(['basin','cy','initial_time','model','fhr'], sort=False) 
     df = tracktimes.apply(expand_wind_radii, rads=rads, debug=debug)
-    df = df.reset_index(drop=True) # Don't need level_0 and level_1 columns in DataFrame
-    df[["rad1","rad2","rad3","rad4"]] = df[["rad1","rad2","rad3","rad4"]].fillna(value=0) # Make missing wind radii zero.
-    df[["seas1","seas2","seas3","seas4"]] = df[["seas1","seas2","seas3","seas4"]].fillna(value=0) # Make missing seas radii zero.
+    df = df.droplevel(['basin','cy','initial_time','model','fhr']).reset_index()
     return df
 
 
@@ -1318,7 +1319,6 @@ def derived_winds(u10, v10, mslp, lonCell, latCell, row, vmax_search_radius=250.
     penv_azimuthal_mean = get_azimuthal_mean(mslp, distance, binsize = 200*units.km)
     penv = penv_azimuthal_mean.sel(radius = 900*units.km).data
 
-    pdb.set_trace()
     derived_winds_dict = { # these values were xarrays, but I applied .data() to them already.
             "raw_vmax"     : raw_vmax,
             "raw_rmw"      : raw_rmw,
