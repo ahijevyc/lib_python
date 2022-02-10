@@ -110,6 +110,11 @@ def get_features(subset='all'):
 
     if subset[0:11] == 'basic_nbrhd': features = basic_features + simple_mean_features + simple_max_features
 
+
+    if subset == 'storm':
+        features = ["SBCAPE", "UP_HELI_MAX", "W_UP_MAX", "SHR06", "CAPESHEAR", "TD2", "PREC_ACC_NC", "WSPD10MAX", "STP", "GRPL_MAX", "HGT0C", "CAPESHEAR-N3T1"]
+    if subset == 'env':
+        features = ["SBCAPE", "SHR06", "CAPESHEAR", "TD2", "STP", "HGT0C", "CAPESHEAR-N3T1"]
     if 'ens_mean' in subset:
         features_c = features.copy()
         for fcn in ["std", "max", "min"]:
