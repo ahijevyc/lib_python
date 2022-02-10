@@ -118,7 +118,7 @@ def ROC_curve(ax, obs, fcst, label="", sep=0.1, plabel=True, fill=False, debug=F
                     if debug:
                         print(f"statisticplot.ROC_curve(): tossing {x},{y},{s} annotation. Too close to last label.")
     ax.set_title("ROC curve")
-    no_skill_label = "no skill"
+    no_skill_label = "no skill:0.5"
     # If it is not a child already add perfectly calibrated line
     has_no_skill_line = no_skill_label in [x.get_label() for x in ax.get_lines()]
     if not has_no_skill_line:
