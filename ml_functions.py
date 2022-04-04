@@ -1,19 +1,78 @@
 #!/usr/bin/env python
 
-import pdb
+import datetime as dt
 import glob
-import time, os
+import logging
+import matplotlib.pyplot as plt
 import pandas as pd
+import pdb
 import numpy as np
 import statisticplot
-import datetime as dt
 import scipy.ndimage.filters
 from sklearn.calibration import calibration_curve
 from sklearn import metrics
-import matplotlib.pyplot as plt
+from tensorflow.keras import backend as K
+import time, os
+import xarray
 
 def log(msg, flush=True):
     print( time.ctime(time.time()), msg , flush=flush)
+
+def brier_skill_score(obs, preds):
+    bs = K.mean((preds - obs) ** 2)
+    obs_climo = K.mean(obs, axis=0) # use each observed class frequency instead of 1/nclasses. Only matters if obs is multiclass.
+    bs_climo = K.mean((obs - obs_climo) ** 2)
+    bss = 1.0 - (bs/bs_climo+K.epsilon())
+    return bss
+
+def rptdist2bool(df, rptdist, twin):
+    # get rid of columns that are not associated with the time window (twin)
+    dropcol=[]
+    for r in ["sighail", "sigwind", "hailone", "wind", "torn"]:
+        for h in [0,1,2]:
+            if h != twin:
+                dropcol.append(f"{r}_rptdist_{h}hr")
+    df = df.drop(columns=dropcol)
+    # keep track of new Boolean column names
+    rptcols = []
+    for r in ["sighail", "sigwind", "hailone", "wind", "torn"]:
+        rh = f"{r}_rptdist_{twin}hr"
+        # Convert severe report distance to boolean (0-rptdist = True)
+        df[rh] = (df[rh] >= 0) & (df[rh] < rptdist)
+        rptcols.append(rh)
+
+    # Any report
+    any_rpt_col = f"any_rptdist_{twin}hr"
+    hailwindtorn = [f"{r}_rptdist_{twin}hr" for r in ["hailone","wind","torn"]]
+    df[any_rpt_col] = df[hailwindtorn].any(axis="columns")
+    rptcols.append(any_rpt_col)
+    return df, rptcols
+
+def get_glm(twin,rptdist):
+    assert twin == 2, "get_glm assumes time window is 2, not {twin}"
+    logging.info(f"load {twin}h {rptdist}km GLM")
+    oneGLMfile = True
+    if oneGLMfile:
+        glm = xarray.open_dataset("/glade/scratch/ahijevyc/temp/GLM_all.nc")
+    else:
+        glmfiles = sorted(glob.glob("/glade/work/ahijevyc/NSC_objects/GLM/2*.glm.nc"))
+        glmtimes = [datetime.datetime.strptime(os.path.basename(x), "%Y%m%d%H.glm.nc") for x in glmfiles]
+        logging.info("open_mfdataset")
+        glm = xarray.open_mfdataset(glmfiles, concat_dim="time", combine="nested")
+
+    assert (glm.time_coverage_start[1] - glm.time_coverage_start[0]) == np.timedelta64(3600,'s'), 'glm.time_coverage_start interval not 1h'
+    logging.info("Add flashes from previous 2 times and next time to current time. 4-hour centered time window")
+    glm = glm + glm.shift(time_coverage_start=2) + glm.shift(time_coverage_start=1) + glm.shift(time_coverage_start=-1)
+
+    if rptdist != 40:
+        k = int(rptdist/40)
+        logging.warning(f"this is not correct. the window overlaps masked points")
+        logging.warning(f"TODO: save GLM in non-masked form, or filter it from 40km to 120km while unmasked and making the GLM files.")
+        logging.info(f"sum GLM flash counts in {k}x{k} window")
+        glm = glm.rolling(x=k, y=k, center=True).sum()
+
+    glm = glm.rename(dict(time_coverage_start="valid_time", y="projection_y_coordinate", x="projection_x_coordinate"))
+    return glm
 
 
 def print_scores(obs, fcst, label, desc="", n_bins=10, debug=False):
@@ -63,6 +122,8 @@ def upscale(field, nngridpts, type='mean', maxsize=27):
         # For some reason, in this case T2 is transformed to 0-4 range
     elif type == 'max':
         field = scipy.ndimage.filters.maximum_filter(field, size=maxsize)
+    elif type == 'min':
+        field = scipy.ndimage.filters.minimum_filter(field, size=maxsize)
 
     field_interp = field.flatten()[nngridpts[1]].reshape((65,93))
 
