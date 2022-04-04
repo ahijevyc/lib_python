@@ -227,8 +227,8 @@ def extension(stormname, season):
     x = {("ISAAC",2012): # first element is last position from ibtracs, then tracked manually in 700mb wind in NARR
             {"valid_time": [datetime(2012,9,1,6), datetime(2012,9,1,12), datetime(2012,9,1,15), datetime(2012,9,1,18), datetime(2012,9,1,21),
                                                   datetime(2012,9,2, 0), datetime(2012,9,2, 3), datetime(2012,9,2, 6), datetime(2012,9,2, 9)],
-             "lat"     : [ 38.4,  38.5,  38.7,  38.7,  38.6,  39.1,  38.7,  38.5,  38.9] * units.units["degree_N"],
-             "lon"     : [-93.3, -93.6, -93.1, -93.0, -92.0, -91.7, -90.9, -90.6, -89.7] * units.units["degree_E"],
+             "lat"     : [ 38.4,  38.5,  38.7,  38.7,  38.6,  39.1,  38.7,  38.5,  38.9] * units.units.degree_N,
+             "lon"     : [-93.3, -93.6, -93.1, -93.0, -92.0, -91.7, -90.9, -90.6, -89.7] * units.units.degree_E,
              "storm_size_S" : 1.0, # Does this make sense as a fill-in value? for Vt500km, it does
             }
         }
