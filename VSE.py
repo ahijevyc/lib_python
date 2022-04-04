@@ -11,17 +11,33 @@ def composites():
     cl = [os.path.basename(f).split('.')[0] for f in ff]
     return set(cl)
 
+def str3(label,az,r):
+    # stringify 3 values with slash delimiter
+    return f"{label}/{az}deg/{r}km"
+
+def ptlist(label,az,r):
+    # return point label and coordinates at centroid, TC center, and opposite centroid
+    return [str3(label,az,r), "TC center/0deg/0km", str3("opposite "+label, az+180, r)]
 
 # dictionary with coords as keys and a dictionary of pointlists as values.
 pointlist = {
         # Ran NARR_composite.py with all LTC categories except near coast and well inland,
-        # 0003z, 0609z, 1215z, 1821z combined 
-        # for north pointing up coordinate system these are points in the composite corresponding to max shear or torn rpts
+        # 0003z, 0609z, 1215z, 1821z combined (/glade/work/ahijevyc/share/VSE/all_LTC.txt)
+        # these are points in the composite corresponding to max shear or torn rpts
         "north" : {
-            "shr10_700 max"            : ["shear max/58deg/280km",     "TC center/0deg/0km",     "opposite shr max/238deg/280km"],
-            "torn max"                 : ["torn max/74.3deg/254.4km",  "TC center/0deg/0km","opposite torn max/254.3deg/254.4km"],
-            "tornadoes_well_inland torn max" : ["torn max/80deg/200km","TC center/0deg/0km",    "opposite torn max/260deg/200km"]
-            }
+                "shr10_700 max"                  : ptlist("shear max", 61.5, 260), 
+                "torn max"                       : ptlist("torn max",  74.3, 254), 
+                "tornadoes_well_inland torn max" : ptlist("torn max",  80,   200)
+                },
+        "storm motion" : {
+                "shr10_700 max"                  : ptlist("shear max", 47.5, 260), 
+                "torn max"                       : ptlist("torn max",  60.0, 245), 
+                },
+        "wind shear" : {
+                "shr10_700 max"                  : ptlist("shear max",  2.5, 260), 
+                "torn max"                       : ptlist("torn max",  19.2, 239), 
+                },
+
         }
 
 
