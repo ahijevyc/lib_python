@@ -1,6 +1,7 @@
 import atcf
 import datetime
 from fieldinfo import fieldinfo,readNCLcm
+import logging
 from netCDF4 import Dataset
 import numpy as np
 import os
@@ -20,7 +21,7 @@ def raw_vitals(row, diagdir, lonCell, latCell, wind_radii_method=None, debug=Fal
     diagfile = get_diag_name(row.valid_time, prefix='diag.', suffix='.nc')
 
     diagfile = os.path.join(diagdir,diagfile)
-    if debug: print("reading diagfile", diagfile)
+    logging.debug(f"reading diagfile {diagfile}")
     ds = xarray.open_dataset(diagfile)
     ds = ds[['u10','v10','mslp']].metpy.quantify() # Don't choke on 'dBZ' not defined in unit registry
     ds = ds.isel(Time=0)
@@ -51,8 +52,7 @@ def origmesh(df, initfile, diagdir, wind_radii_method="max", debug=False):
     # The first time this is called initfile is a simple string.
     # Next time, it is a dictionary with all the needed variables.
     if isinstance(initfile, str):
-        if debug:
-            print("reading lat/lon from", initfile)
+        logging.debug(f"reading lat/lon from {initfile}")
         init = xarray.open_dataset(initfile)
         lonCell = init['lonCell'].metpy.convert_units("degrees")
         latCell = init['latCell'].metpy.convert_units("degrees")
@@ -64,8 +64,7 @@ def origmesh(df, initfile, diagdir, wind_radii_method="max", debug=False):
                 "latCell":latCell,
                 }
     else:
-        if debug:
-            print("reading lat/lon from dictionary")
+        logging.debug("reading lat/lon from dictionary")
         lonCell = initfile["lonCell"]
         latCell = initfile["latCell"]
 
@@ -164,16 +163,37 @@ def makeEnsembleListMPAS(wrfinit, timerange, ENS_SIZE, g193=False, debug=False):
             diag   = '/glade/p/nsc/nmmm0046/schwartz/MPAS_ens_15-3km_mesh/POST/%s/ens_%d/diag.%s.nc'%(yyyymmddhh,mem,wrfvalidstr)
             if g193:
                 diag   = '/glade/p/nsc/nmmm0046/schwartz/MPAS_ens_15-3km_mesh/POST/%s/ens_%d/diag_latlon_g193.%s.nc'%(yyyymmddhh,mem,wrfvalidstr)
-            if debug: print(diag)
+            logging.debug(diag)
             if os.path.exists(diag): file_list['diag'].append(diag)
             else: 
                 missing_list['diag'].append(missing_index)
-                print(diag + " not exist")
+                logging.warning(f"{diag} does not exist")
             missing_index += 1
-    if debug:
-        print("file_list",file_list)
+    logging.debug(f"file_list {file_list}")
     if not file_list['diag']:
-        print('Empty file_list')
+        logging.info('Empty file_list')
     return (file_list, missing_list)
+
+# From NCAR geocat example
+
+# This funtion splits a global mesh along longitude
+#
+# Examine the X coordinates of each triangle in 'tris'. Return an array of 'tris' where only those triangles
+# with legs whose length is less than 't' are returned. 
+# 
+def unzipMesh(x,tris,t):
+    return tris[(np.abs((x[tris[:,0]])-(x[tris[:,1]])) < t) & (np.abs((x[tris[:,0]])-(x[tris[:,2]])) < t)]
+
+# Compute the signed area of a triangle
+#
+def triArea(x,y,tris):
+    return ((x[tris[:,1]]-x[tris[:,0]]) * (y[tris[:,2]]-y[tris[:,0]])) - ((x[tris[:,2]]-x[tris[:,0]]) * (y[tris[:,1]]-y[tris[:,0]]))
+
+# Reorder triangles as necessary so they all have counter clockwise winding order. CCW is what Datashader and MPL
+# require.
+#
+def orderCCW(x,y,tris):
+    tris[triArea(x,y,tris)<0.0,:] = tris[triArea(x,y,tris)<0.0,::-1]
+    return(tris)
 
 
