@@ -1,12 +1,11 @@
-import pdb
 import numpy as np
-import scikitplot.metrics
 from sklearn.calibration import calibration_curve
 from sklearn import metrics
 
 
 # Use scikitplot.metrics.plot_roc - nice because has adds other blended ROC curves in it.
 def plot_roc(y_true, y_probas, **kwargs):
+    import scikitplot.metrics
     #Reorder y_probas columns to match order of categories in y_true
     #plot_roc() expects alphabetical, but labels are probably ordered categories in a different order
     new_column_order = np.argsort(y_true.cat.categories)
