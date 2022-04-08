@@ -734,3 +734,9 @@ def fromskewtds(nc, field, debug=False):
 
     return data
 
+crs = dict(
+    grid_mapping_name='lambert_conformal_conic',
+    latitude_of_projection_origin=1.000,
+    longitude_of_central_meridian=214.500,
+    standard_parallel=50.000,
+)
