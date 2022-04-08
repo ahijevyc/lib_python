@@ -22,7 +22,8 @@ def brier_skill_score(obs, preds):
     bs = K.mean((preds - obs) ** 2)
     obs_climo = K.mean(obs, axis=0) # use each observed class frequency instead of 1/nclasses. Only matters if obs is multiclass.
     bs_climo = K.mean((obs - obs_climo) ** 2)
-    bss = 1.0 - (bs/bs_climo+K.epsilon())
+    #bss = 1.0 - (bs/bs_climo+K.epsilon()) # TODO: shouldn't K.epsilon() be grouped with denominator?
+    bss = 1.0 - bs/(bs_climo+K.epsilon()) 
     return bss
 
 def rptdist2bool(df, rptdist, twin):
@@ -48,17 +49,22 @@ def rptdist2bool(df, rptdist, twin):
     rptcols.append(any_rpt_col)
     return df, rptcols
 
-def get_glm(twin,rptdist):
+def get_glm(twin,rptdist,date=None):
     assert twin == 2, "get_glm assumes time window is 2, not {twin}"
     logging.info(f"load {twin}h {rptdist}km GLM")
-    oneGLMfile = True
-    if oneGLMfile:
-        glm = xarray.open_dataset("/glade/scratch/ahijevyc/temp/GLM_all.nc")
+    if date:
+        logging.info(f"date={date}")
+        glmfiles = sorted(glob.glob(f"/glade/work/ahijevyc/NSC_objects/GLM/{date.strftime('%Y%m%d')}*.glm.nc"))
+        glm = xarray.open_mfdataset(glmfiles, concat_dim="time_coverage_start", combine="nested")
     else:
-        glmfiles = sorted(glob.glob("/glade/work/ahijevyc/NSC_objects/GLM/2*.glm.nc"))
-        glmtimes = [datetime.datetime.strptime(os.path.basename(x), "%Y%m%d%H.glm.nc") for x in glmfiles]
-        logging.info("open_mfdataset")
-        glm = xarray.open_mfdataset(glmfiles, concat_dim="time", combine="nested")
+        oneGLMfile = True
+        if oneGLMfile:
+            glm = xarray.open_dataset("/glade/scratch/ahijevyc/temp/GLM_all.nc")
+        else:
+            glmfiles = sorted(glob.glob("/glade/work/ahijevyc/NSC_objects/GLM/2*.glm.nc"))
+            #glmtimes = [datetime.datetime.strptime(os.path.basename(x), "%Y%m%d%H.glm.nc") for x in glmfiles] # why is this here?
+            logging.info("open_mfdataset")
+            glm = xarray.open_mfdataset(glmfiles, concat_dim="time_coverage_start", combine="nested")
 
     assert (glm.time_coverage_start[1] - glm.time_coverage_start[0]) == np.timedelta64(3600,'s'), 'glm.time_coverage_start interval not 1h'
     logging.info("Add flashes from previous 2 times and next time to current time. 4-hour centered time window")
