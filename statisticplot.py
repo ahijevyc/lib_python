@@ -1,4 +1,6 @@
+import logging
 import numpy as np
+import pdb
 from sklearn.calibration import calibration_curve
 from sklearn import metrics
 
@@ -33,7 +35,7 @@ def limits(stat):
 def bss(obs, fcst):
     bs = np.mean((fcst-obs)**2)
     climo = np.mean((obs - np.mean(obs))**2)
-    return 1.0 - (bs/climo)
+    return 1.0 - bs/climo
 
 def reliability_diagram(ax, obs, fcst, base_rate=None, label="", n_bins=10, debug=False, **kwargs):
     if obs is None or fcst is None:
@@ -90,16 +92,18 @@ def count_histogram(ax, fcst, label="", n_bins=10, count_label=True, debug=False
                 xytext = (0,-1), textcoords='offset points', va='top', ha='center', fontsize='xx-small')
     return counts, bins, patches
 
-def ROC_curve(ax, obs, fcst, label="", sep=0.1, plabel=True, fill=False, debug=False):
-    if obs is None or fcst is None:
+def ROC_curve(ax, obs, fcst, label="", sep=0.1, plabel=True, fill=False):
+    auc = None
+    if obs.all() or (obs == False).all():
+        logging.info("obs are all True or all False. ROC AUC score not defined")
+        r = ax.plot([0],[0], marker="+", linestyle="solid", label=label)
+    elif obs is None or fcst is None:
         # placeholders
         r = ax.plot([0],[0], marker="+", linestyle="solid", label=label)
-        auc = None
     else:
         # ROC auc with threshold labels separated by sep
         auc = metrics.roc_auc_score(obs, fcst)
-        if debug:
-            print("auc", auc)
+        logging.debug(f"auc {auc}")
         pofd, pody, thresholds = metrics.roc_curve(obs, fcst)
         r = ax.plot(pofd, pody, marker="+", markersize=1/np.log10(len(pofd)), linestyle="solid", label="%s  auc:%1.4f" % (label, auc))
         if fill:
