@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import pdb
 import numpy as np
-import statisticplot
+import hwtmode.statisticplot
 import scipy.ndimage.filters
 from sklearn.calibration import calibration_curve
 from sklearn import metrics
@@ -54,14 +54,14 @@ def get_glm(twin,rptdist,date=None):
     logging.info(f"load {twin}h {rptdist}km GLM")
     if date:
         logging.info(f"date={date}")
-        glmfiles = sorted(glob.glob(f"/glade/work/ahijevyc/NSC_objects/GLM/{date.strftime('%Y%m%d')}*.glm.nc"))
+        glmfiles = sorted(glob.glob(f"/glade/work/ahijevyc/GLM/{date.strftime('%Y%m%d')}*.glm.nc"))
         glm = xarray.open_mfdataset(glmfiles, concat_dim="time_coverage_start", combine="nested")
     else:
         oneGLMfile = True
         if oneGLMfile:
             glm = xarray.open_dataset("/glade/scratch/ahijevyc/temp/GLM_all.nc")
         else:
-            glmfiles = sorted(glob.glob("/glade/work/ahijevyc/NSC_objects/GLM/2*.glm.nc"))
+            glmfiles = sorted(glob.glob("/glade/work/ahijevyc/GLM/2*.glm.nc"))
             #glmtimes = [datetime.datetime.strptime(os.path.basename(x), "%Y%m%d%H.glm.nc") for x in glmfiles] # why is this here?
             logging.info("open_mfdataset")
             glm = xarray.open_mfdataset(glmfiles, concat_dim="time_coverage_start", combine="nested")
@@ -94,7 +94,7 @@ def print_scores(obs, fcst, label, desc="", n_bins=10, debug=False):
     print('brier score', np.mean((obs-fcst)**2))
 
     # BSS
-    bss_val = statisticplot.bss(obs, fcst)
+    bss_val = hwtmode.statisticplot.bss(obs, fcst)
     print('bss', bss_val)
 
     # ROC auc
@@ -106,14 +106,14 @@ def print_scores(obs, fcst, label, desc="", n_bins=10, debug=False):
     fig_index=1
     fig = plt.figure(fig_index, figsize=(10, 7))
     ax1 = plt.subplot2grid((3,2), (0,0), rowspan=2)
-    reld = statisticplot.reliability_diagram(ax1, obs, fcst, label=label, n_bins=n_bins, debug=debug)
+    reld = hwtmode.statisticplot.reliability_diagram(ax1, obs, fcst, label=label, n_bins=n_bins, debug=debug)
     ax1.tick_params(axis='x', labelbottom=False)
  
     """histogram of counts"""
     ax2 = plt.subplot2grid((3,2), (2,0), rowspan=1, sharex=ax1)
-    histogram_of_counts = statisticplot.count_histogram(ax2, fcst, label=label, n_bins=n_bins, debug=debug)
+    histogram_of_counts = hwtmode.statisticplot.count_histogram(ax2, fcst, label=label, n_bins=n_bins, debug=debug)
     ROC_ax = plt.subplot2grid((3,2), (0,1), rowspan=2)
-    roc_curve = statisticplot.ROC_curve(ROC_ax, obs, fcst, label=label, sep=0.1, debug=debug)
+    roc_curve = hwtmode.statisticplot.ROC_curve(ROC_ax, obs, fcst, label=label, sep=0.1, debug=debug)
     fineprint = f"{desc} {label}\ncreated {str(dt.datetime.now(tz=None)).split('.')[0]}"
     plt.annotate(s=fineprint, xy=(1,1), xycoords=('figure pixels', 'figure pixels'), va="bottom", fontsize=5) 
     ofile = f'{desc}.{label}.png'
