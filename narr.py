@@ -24,6 +24,7 @@ narrFlx = ('flx', 'RS.flx')
 narrPBL = ('pbl', 'RS.pbl')
 narr3D  = ('3D', '3D')
 narrFixed  = "/glade/scratch/"+os.getenv("USER")+"/NARR/rr-fixed.grb.nc"
+targetdir = os.path.join("/glade/scratch",os.getenv("USER"),"NARR")
 
 # Modify fieldinfo dictionary for NARR.
 # fieldinfo keys are "human-readable" string nicknames like "u700" and "speed10m".
@@ -39,7 +40,7 @@ narrFixed  = "/glade/scratch/"+os.getenv("USER")+"/NARR/rr-fixed.grb.nc"
 [fieldinfo[f].pop('filename',None) for f in fieldinfo]
 
 # Define pressure-level variables
-levs = [l * units.meters for l in [10,30]]
+levs = [l * units.meters for l in [10,30,1000,3000,5000,6000]]
 levs.extend(np.arange(100,1025,25) * units.hPa) # large range useful for Chris Rozoff's CM1 model. Use wide range to prevent "out of contour range" error in NARR_composite.py.
 levs.extend([l * units["dimensionless"] for l in ['lev1', 'trop']])
 for lev in levs:
@@ -102,19 +103,15 @@ for lev in levs:
     fieldinfo[vvel]['vertical'] = lev
     fieldinfo[vvel]['units'] = 'microbar/second'
 fieldinfo['bunkers']['fname'] = ['USTM_221_HTGY','VSTM_221_HTGY']
-fieldinfo['CAPE_221_SFC'] = fieldinfo["sbcape"].copy()
-fieldinfo['CAPE_221_SFC'].update(dict(fname = 'CAPE_221_SFC', vertical = 'surface-based'))
-fieldinfo['CAPE_221_SPDY'] = fieldinfo["sbcape"].copy()
-fieldinfo['CAPE_221_SPDY'].update(dict(fname = 'CAPE_221_SPDY', vertical = '180-0mb above gnd'))
 #fieldinfo['hfx'] = {'levels' : [-640,-320,-160,-80,-40,-20,-10,0,5,10,15,20,40,60,80], 'cmap':readNCLcm('amwg256')[::-1], 'fname'  : ['SHTFL_221_SFC'] }
 fieldinfo['hfx'] = {'levels' : list(range(-600,125,25)), 'cmap':readNCLcm('amwg256')[::-1], 'fname'  : 'SHTFL_221_SFC'} # NARR sfc flux is upward (highly negative in day)
 fieldinfo['lcl'] = {}
 fieldinfo['lcl']['cmap'] = [readNCLcm('nice_gfdl')[i] for i in [3,20,37,54,72,89,106,123,141,158,175,193]]
 fieldinfo['lcl']['cmap'].reverse()
-fieldinfo['lcl']['fname'] = ['PRES_221_HTGL','TMP_221_HTGL','DPT_221_HTGL']
-fieldinfo['lcl']['levels'] = [400, 500, 600, 700, 750, 800, 850, 875, 900, 925, 950, 975, 1000]
+fieldinfo['lcl']['fname'] = 'PRES_221_ADCL'
+fieldinfo['lcl']['levels'] = [500, 600, 700, 750, 800, 850, 875, 900, 925, 950, 975, 1000]
 fieldinfo['lcl']['units'] = 'hPa'
-fieldinfo['lcl']['parcel'] = 2*units.meter
+fieldinfo['zlcl']['fname'] = ['PRES_221_ADCL','HGT_221_ISBL'] # zlcl cmap and levels initialized in fieldinfo.py. 
 #fieldinfo['lh']  = {'levels' : [-1280,-640,-320,-160,-80,-40,-20,0,10,20,40], 'cmap':readNCLcm('MPL_BrBG')[127:40:-1], 'fname'  : ['LHTFL_221_SFC'] }
 fieldinfo['lh']  = {'levels' : list(range(-700,150,50)), 'cmap':readNCLcm('MPL_BrBG')[127:30:-1], 'fname'  : 'LHTFL_221_SFC'}
 fieldinfo['mslp']['fname'] = 'PRMSL_221_MSL'
@@ -137,10 +134,11 @@ fieldinfo['mlcinh']['vertical'] = 'mixed-layer'
 fieldinfo['mucape']['vertical'] = 'most unstable'
 fieldinfo['pblh']['fname'] = 'HPBL_221_SFC'
 fieldinfo['precipacc']['fname'] = 'RAINNC'
-#fieldinfo['pwat']['levels'] = [5,10,20,25,30,40,50,60,70,80,90,100] # precipitable water in kg/m**2 not depth-of-water
+fieldinfo['psfc'] = fieldinfo['mslp'].copy()
+fieldinfo['psfc']['fname'] = 'PRES_221_SFC'
 fieldinfo['pwat']['levels'] = [20,25,30,35,40,45,50,55,60,65,70] # precipitable water in kg/m**2 not depth-of-water
 fieldinfo['pwat']['fname'] = 'P_WAT_221_EATM'
-fieldinfo['pwat']['temporal'] = 0
+fieldinfo['pwat']['temporal'] = 0 # P_WAT_221_EATM has 0 and 3-h forecast, for some reason.
 fieldinfo['rh_0deg'] = fieldinfo['rh700'].copy() 
 fieldinfo['rh_0deg']['fname'] = 'R_H_221_0DEG'
 fieldinfo['rh_0deg']['vertical'] = 'freezing level' # Remember to overwrite 'vertical' from rh700
@@ -152,15 +150,15 @@ fieldinfo['rhlev1']['fname'] = 'R_H_221_HYBL'
 fieldinfo['rhlev1']['vertical'] = 'lowest model level'
 fieldinfo['scp'] = fieldinfo['stp'] # stp is in fieldinfo.py not scp 
 fieldinfo['scp']['fname'] = ['CAPE_221_SFC','CIN_221_SFC','HLCY_221_HTGY']
-fieldinfo['scp']['shear_layer'] = 'shr10_500'
+fieldinfo['scp']['shear_layer'] = 'shr10m_500hPa'
 fieldinfo['sh2']    = {'levels' : [0.5,1,2,4,8,12,14,16,17,18,19,20,21,22,23,24], 'cmap':fieldinfo['td2']['cmap'], 'fname': 'SPF_H_221_HTGL', 'vertical':2*units.meters, 'units':'g/kg'}
 fieldinfo['shlev1'] = {'levels' : [0.5,1,2,4,8,12,14,16,17,18,19,20,21,22,23,24], 'cmap':fieldinfo['td2']['cmap'], 'fname': 'SPF_H_221_HYBL', 'vertical':'lowest model level', 'units':'g/kg'}
-fieldinfo['shr10_30']  = fieldinfo['speed10m'].copy()
-fieldinfo['shr10_30']['levels'] = range(0,54,3)
+fieldinfo['shr10m_30m']  = fieldinfo['speed10m'].copy()
+fieldinfo['shr10m_30m']['levels'] = range(0,54,3)
 #shrlev1_trop = wind shear between tropopause and lowest model level
 for bot, top in itertools.permutations(levs, 2): # create shear fieldinfo entry for every permutation of levels
-    shr = f"shr{bot.m}_{top.m}"
-    fieldinfo[shr] = fieldinfo['shr10_30'].copy()
+    shr = f"shr{bot.m}{bot.units:~}_{top.m}{top.units:~}"
+    fieldinfo[shr] = fieldinfo['shr10m_30m'].copy()
     fieldinfo[shr]['vertical'] = [bot,top]
 fieldinfo['shrtrop'] = {'levels':np.array([2,5,10,15,20,30,50])*1e-3, 'cmap': fieldinfo['speed700']['cmap'], 
                         'fname': 'VWSH_221_TRO', 'vertical':'tropopause'} # shear at tropopause. https://www.emc.ncep.noaa.gov/mmb/rreanl/faq.html 
@@ -174,7 +172,8 @@ fieldinfo['surface_height']['fname'] = 'HGT_221_SFC'
 fieldinfo['t2']['fname'] = 'TMP_221_SFC'
 fieldinfo['t2']['units'] = 'degF'
 fieldinfo['tctp'] = fieldinfo['scp']
-fieldinfo['tctp']['shear_layer'] = 'shr10_700'
+fieldinfo['tctp']['shear_layer'] = 'shr10m_3000m'
+fieldinfo['tctp2014'] = fieldinfo['tctp'].copy()
 fieldinfo['thetasfc'] = {'levels' : np.arange(290,320,2), 'cmap': ['#eeeeee', '#dddddd', '#cccccc', '#aaaaaa']+readNCLcm('precip2_17lev')[3:-1], 'fname'  : 'POT_221_SFC'}
 fieldinfo['theta2']   = {'levels' : np.arange(294,313,1), 'cmap': ['#eeeeee', '#dddddd', '#cccccc', '#aaaaaa']+readNCLcm('precip2_17lev')[3:-1], 'fname'  : ['PRES_221_HTGL', 'TMP_221_HTGL'], 'vertical':2*units.meters}
 fieldinfo['thetae2']  = {'levels' : np.arange(321,375,3), 'cmap': ['#eeeeee', '#dddddd', '#cccccc', '#aaaaaa']+readNCLcm('precip2_17lev')[3:-1], 'fname'  : ['PRES_221_HTGL', 'TMP_221_HTGL','DPT_221_HTGL'], 'vertical':2*units.meters}
@@ -186,8 +185,6 @@ fieldinfo['wvfluxconv'] = {'fname':'WVCONV_221_ISBY_acc3h','levels':np.array(fie
 fieldinfo['wcflux'] = dict(fname=['WCUFLX_221_ISBY_acc3h','WCVFLX_221_ISBY_acc3h'],cmap=[],levels=[])
 fieldinfo['wcflux']['sel'] = fieldinfo['wcflux']['fname']
 fieldinfo['wcfluxconv'] = {'fname':'WCCONV_221_ISBY_acc3h','levels':np.array(fieldinfo['precip']['levels'])*2,'cmap': readNCLcm('prcp_1')}
-fieldinfo['zlcl']['fname'] = ['PRES_221_HTGL','TMP_221_HTGL','DPT_221_HTGL',"HGT_221_ISBL"] 
-fieldinfo['zlcl']['parcel'] = 2 * units.meter
 
 
 #######################################################################
@@ -196,9 +193,9 @@ idir = "/glade/collections/rda/data/ds608.0/3HRLY/" # path to NARR
 
 # Get static NARR file, convert to netCDF.
 # Return netCDF filename.
-def get_static(fieldname, debug=False):
+def get_fixed(fieldname):
     narr = narrFixed
-    targetdir = os.path.basedir(narr)
+    targetdir = os.path.dirname(narr)
     # Convert to netCDF if netCDF file doesn't exist.
     if not os.path.exists(narr):
         narr_grb ='/glade/collections/rda/data/ds608.0/FIXED/rr-fixed.grb'
@@ -209,29 +206,28 @@ def get_static(fieldname, debug=False):
     ncStatic = xarray.open_dataset(narr)
     return ncStatic[fieldname]
 
+surface_height = get_fixed(fieldinfo["surface_height"]["fname"]).metpy.quantify()
 
 # Get NARR file from tar file, convert to netCDF.
 # Return netCDF filename.
-def get(valid_time, targetdir='.', narrtype=narr3D, idir=idir, debug=False):
+def get(valid_time, targetdir=targetdir, narrtype=narr3D, idir=idir):
     if narrtype == narrFixed:
         return narrFixed
     assert isinstance(valid_time, datetime.datetime) # make sure valid_time is a datetime object
-    if debug:
-        print("narr.get(): valid_time=",valid_time)
+    logging.debug(f"narr.get(): valid_time={valid_time} targetdir={targetdir} narrtype={narrtype} idir={idir}")
     vartype, file_suffix = narrtype # 3D, clm, flx, pbl, or sfc 
-    narr = targetdir + '/' + valid_time.strftime("merged_AWIP32.%Y%m%d%H."+file_suffix+".nc")
+    narr = os.path.join(targetdir, valid_time.strftime("merged_AWIP32.%Y%m%d%H."+file_suffix+".nc"))
     # Convert to netCDF if netCDF file doesn't exist.
     if os.path.exists(narr):
         #TODO: Make sure file is complete. Another instance of narr.get() may still be writing it.
         pass
     else:
-        print("narr.get(): previously existing narr file not found",narr)
+        logging.info(f"narr.get(): previously existing narr file not found {narr}")
         narr_grb = narr[:-3] # drop '.nc' suffix
         # Extract NARR grib file from tar file if it doesn't exist.
         if not os.path.exists(narr_grb):
             search_str = idir + valid_time.strftime('%Y/NARR'+vartype+'_%Y%m_') + '*.tar'
-            if debug:
-                print("narr.get(): search_str=",search_str)
+            logging.debug(f"narr.get(): search_str={search_str}")
             narrtars = glob.glob(search_str)
             for n in narrtars:
                 prefix, yyyymm, dddd = n.split('_')
@@ -240,19 +236,18 @@ def get(valid_time, targetdir='.', narrtype=narr3D, idir=idir, debug=False):
                 dd2 = datetime.datetime.strptime(yyyymm + dddd[2:4], '%Y%m%d') + datetime.timedelta(days=1)
                 # make dd1 and dd2 timezone-aware if valid_time is timezone-aware
                 if valid_time.tzinfo is not None and valid_time.tzinfo.utcoffset(valid_time) is not None:
-                    if debug:
-                        print("making dd1 and dd2 timezone-aware cause valid_time is")
+                    logging.debug("making dd1 and dd2 timezone-aware cause valid_time is")
                     dd1 = pytz.utc.localize(dd1)
                     dd2 = pytz.utc.localize(dd2)
                 if valid_time >= dd1 and valid_time < dd2:
                     break
             narrtar = n
-            print("Found NARR tar file: "+narrtar)
+            logging.info(f"Found NARR tar file: {narrtar}")
             tar = tarfile.open(narrtar, mode='r')
-            print("extracting "+os.path.basename(narr_grb))
+            logging.info(f"extracting {os.path.basename(narr_grb)}")
             ret = tar.extract(os.path.basename(narr_grb),path=targetdir)
         call_args = ["ncl_convert2nc", narr_grb, "-e", "grb", "-o", targetdir]
-        print(call_args)
+        logging.info(call_args)
         subprocess.check_call(call_args)
     return narr 
 
@@ -268,19 +263,18 @@ def get_ll(data):
 
     return lon, lat
 
-def myunits(data, info, debug=False):
+def myunits(data, info):
     # Quantify xarray.
     data = data.metpy.quantify() # quantify in MetPy>=1
     # Convert to info["units"].
     if "units" in info:
-        if debug:
-            print("converting to "+info["units"])
+        logging.debug(f'converting to {info["units"]}')
         data = data.metpy.convert_units(info["units"]) # Don't .sel(lv_HTGL3=10) before .metpy.convert_units('kt'). You get None in return.
     return data
 
 
 
-def temporal(data, info, debug=False):
+def temporal(data, info):
 
     logging.debug(f"narr.temporal(): info={info}")
 
@@ -300,8 +294,7 @@ def temporal(data, info, debug=False):
         else:
             temporal_str = data.dims[0]
             assert 'time' in temporal_str
-            if debug:
-                print("narr.temporal(): metpy does not identify temporal coordinate. assume 1st dim is ("+temporal_str+")")
+            logging.debug(f"narr.temporal(): metpy does not identify temporal coordinate. assume 1st dim is ({temporal_str})")
             data = data[time0]
         data.attrs['timetitle'] = str(time0) + "-h" # TODO: only works with zero. convert [ns] to hours. 
 
@@ -309,7 +302,7 @@ def temporal(data, info, debug=False):
 
 
 
-def vertical(data, info, debug=False):
+def vertical(data, info):
     logging.debug(f"narr.vertical(): data {data.name} info {info}")
 
     if 'verttitle' in data.attrs:
@@ -335,7 +328,7 @@ def vertical(data, info, debug=False):
             verttitle = str(vlevel)
         elif len(data.dims) <= 2: # If data has only 2 dimensions assume it has no vertical dimension (like tropopause-level, or max-wind-level)
             logging.debug(f'narr.vertical(): {data.name} is 2D already.')
-            logging.info(f'narr.vertical(): setting verttitle={vlevel}')
+            logging.debug(f'narr.vertical(): setting verttitle={vlevel}')
             data.attrs['verttitle'] = vlevel
             return data
         else:
@@ -353,7 +346,7 @@ def vertical(data, info, debug=False):
 
 
 
-def shear(field, valid_time=None, targetdir=None, debug=False):
+def shear(field, valid_time=None, targetdir=targetdir):
     # bottom and top vertical level are in fieldinfo[field][vertical]
     bot, top = fieldinfo[field]['vertical']
 
@@ -364,6 +357,7 @@ def shear(field, valid_time=None, targetdir=None, debug=False):
     ds = xarray.open_mfdataset(ifiles)
 
     # ubot and vbot
+
     if bot.units == units.meters:
         ubot = ds['U_GRD_221_HTGL'].sel(lv_HTGL3=bot)
         vbot = ds['V_GRD_221_HTGL'].sel(lv_HTGL3=bot)
@@ -373,16 +367,23 @@ def shear(field, valid_time=None, targetdir=None, debug=False):
     elif bot == 'lev1': # lowest model level
         ubot = ds['U_GRD_221_HYBL']
         vbot = ds['V_GRD_221_HYBL']
-        ubot.attrs['verttitle'] = 'lowest model level'
-        vbot.attrs['verttitle'] = 'lowest model level'
+        ubot.attrs['verttitle'] = 'bottom model level'
+        vbot.attrs['verttitle'] = 'bottom model level'
     else:
         print("narr.shear(): unexpected bot {bot}")
         sys.exit(1)
 
     # utop and vtop
     if top.units == units.meters:
-        utop = ds['U_GRD_221_HTGL'].sel(lv_HTGL3=top)
-        vtop = ds['V_GRD_221_HTGL'].sel(lv_HTGL3=top)
+        if top.m in ds["U_GRD_221_HTGL"].metpy.vertical:
+            utop = ds['U_GRD_221_HTGL'].sel(lv_HTGL3=top)
+            vtop = ds['V_GRD_221_HTGL'].sel(lv_HTGL3=top)
+        else:
+            # height in meters AGL
+            hgt3D = ds["HGT_221_ISBL"].metpy.quantify()
+            agl3D = hgt3D - surface_height
+            utop = hgtInterp(top, agl3D, ds["U_GRD_221_ISBL"]) # top and agl3D should be same units
+            vtop = hgtInterp(top, agl3D, ds["V_GRD_221_ISBL"])
     elif top.units == units.hPa:
         utop = ds['U_GRD_221_ISBL'].sel(lv_ISBL0=top)
         vtop = ds['V_GRD_221_ISBL'].sel(lv_ISBL0=top)
@@ -405,9 +406,35 @@ def shear(field, valid_time=None, targetdir=None, debug=False):
         dv.name = vtop.name
     du.attrs['long_name'] += ' shear'
     dv.attrs['long_name'] += ' shear'
-    du.attrs['verttitle'] = f"{bot} to {top}"
-    dv.attrs['verttitle'] = f"{bot} to {top}"
+    du.attrs['verttitle'] = f"{bot:~} to {top:~}"
+    dv.attrs['verttitle'] = f"{bot:~} to {top:~}"
     return du, dv
+
+def hgtInterp(x, xp, fp):
+    assert x.units == xp.metpy.units
+    # x = target height (scalar)
+    # xp = input heights (3D)
+    # fp = data to interpolate to target (3D)
+    # xp>x is False below the vertical layer that encompasses target
+    # Once xp>x turns True, the np.diff function keeps the first occurrence of True in the vertical.
+    # TODO: avoid RuntimeWarning: invalid value encountered in greater. Tried .fillna, .ffill, lots of stuff. 
+    bb = np.diff(xp>x,axis=0) # 3d boolean array. True at start of vertical layer that encompasses target
+    k = bb.argmax(axis=0) # vertical index of start of vertical layer that encompasses target
+    rateofchange = np.diff(fp, axis=0) /  np.diff(xp, axis=0) # rate of change of f with respect to x
+    ij = np.indices(xp.shape[1:]) # 2-d indices of spatial coordinates
+    kij = (k, ij[0], ij[1]) # 3d indices of start of vertical layer 
+    rateofchange = rateofchange[kij] # just for the layer that encompasses target
+    fstart = fp.values[kij] # f at start of layer 
+    dx = x.m - xp.values[kij] # difference betweeen target and start of layer
+    data = fstart + dx * rateofchange
+    da = fp.mean(dim="lv_ISBL0") # eliminate vertical dimension
+    da.values = data
+    da = da.expand_dims(dim=dict(lv_HTGL3=[x.m])) # add lv_HTGL3 dimension 
+    da.attrs = fp.attrs
+    del(da.attrs["level_indicator"])
+
+
+    return da
 
 
 def multiInterp(x, xp, fp):
@@ -429,7 +456,7 @@ def multiInterp(x, xp, fp):
     data = fstart + dx * rateofchange
     return data
 
-def pressure_to_height(target_p, hgt3D, debug=False):
+def pressure_to_height(target_p, hgt3D):
 
     # target_p and vertical coordinate of hgt3D are both in hPa before taking natural log.
     lv_ISBL0 = hgt3D.lv_ISBL0.metpy.unit_array.to('hPa').m
@@ -444,25 +471,26 @@ def pressure_to_height(target_p, hgt3D, debug=False):
     # with quantified data
     return hgt2D.metpy.quantify()
 
-def scalardata(field, valid_time, targetdir=".", debug=False):
+def scalardata(field, valid_time, targetdir=targetdir):
     # Get color map, levels, and netCDF variable name appropriate for requested variable (from fieldinfo module).
     info = fieldinfo[field]
 
     # Make cmap a colors.ListedColormap, if it is not already.
     if not isinstance(info['cmap'], (colors.ListedColormap)):
         info['cmap'] = colors.ListedColormap(info['cmap']) 
-    logging.debug(f"scalardata: found {field} info={info}")
+    logging.debug(f"scalardata: {field} info={info}")
 
     # Get narr file and filename.
     ifiles = [get(valid_time, targetdir=targetdir, narrtype=narrtype) for narrtype in [narrSfc, narrFlx, narrPBL, narr3D]]
-    # TODO: fix hack
-    ifile_basename = ifiles[0].replace(narrSfc[1]+".nc","")
+    # path to ifiles without .RS.... extensions (used in fineprint of NARR_composite.py)
+    ifile_basename = ifiles[0].replace(f"{narrSfc[1]}.nc","")
 
     logging.debug(f"About to open {ifiles}")
 
     nc = xarray.open_mfdataset(ifiles)
 
     # .load() to avoid UserWarning: Passing an object to dask.array.from_array which is already a Dask collection. This can lead to unexpected behavior.
+    logging.debug(f'load {info["fname"]}')
     data = nc[info["fname"]].load().metpy.quantify()
     # Define data array. Speed and shear derived differently.
     # Define 'long_name' attribute
@@ -486,7 +514,7 @@ def scalardata(field, valid_time, targetdir=".", debug=False):
         data.name = field
         data.attrs['long_name'] = "vorticity * 1e5"
     elif field[0:3] == 'shr' and '_' in field:
-        du, dv = shear(field, valid_time=valid_time, targetdir=targetdir, debug=debug)
+        du, dv = shear(field, valid_time=valid_time, targetdir=targetdir)
         data = mcalc.wind_speed(du, dv)
         data.name = field
         data.attrs.update({'long_name':'wind shear', 'verttitle' :du.attrs["verttitle"]})
@@ -510,10 +538,10 @@ def scalardata(field, valid_time, targetdir=".", debug=False):
         data = mcalc.equivalent_potential_temperature(prs, tmp, dpt)
         data = xarray.DataArray(data=data, name=field)
         data.attrs['long_name'] = "equivalent potential temperature"
-    elif field == 'scp' or field == 'stp' or field == 'tctp':
+    elif field == 'scp' or field == 'stp' or field.startswith('tctp'):
         cape, cin, srh = data.data_vars.values()
-        bulk_shear = scalardata(info['shear_layer'], valid_time, targetdir=targetdir, debug=debug)
-        lifted_condensation_level_height = scalardata('zlcl', valid_time, targetdir=targetdir, debug=debug)
+        bulk_shear = scalardata(info['shear_layer'], valid_time, targetdir=targetdir)
+        lifted_condensation_level_height = scalardata('zlcl', valid_time, targetdir=targetdir)
         if field == 'scp':
             # In SPC help, cin is positive in SCP formulation.
             cin_term = -40 * units.parse_expression("J/kg")/cin
@@ -537,43 +565,31 @@ def scalardata(field, valid_time, targetdir=".", debug=False):
             data = xarray.DataArray(data=stp, name=field, attrs=attrs) 
         if field == 'tctp':
             tctp = srh/(40*units.parse_expression('m**2/s**2')) * bulk_shear/(12*units.parse_expression('m/s')) * (2000*units.meters - lifted_condensation_level_height)/(1400*units.meters)
-            # NARR storm relative helicity (srh) is 0-3 km AGL, while original TCTP expects 0-1 km AGL. 
-            # So the shear term is too large using the NARR srh. Normalize the srh term with a larger denominator. 
-            # In STP, srh is normalized by 150 m**2/s**2. Use that.
-            tctp_0_3kmsrh = srh/(150*units.parse_expression('m**2/s**2')) * bulk_shear/(12*units.parse_expression('m/s')) * (2000*units.meters - lifted_condensation_level_height)/(1400*units.meters)
+            # NARR storm relative helicity (srh) is 0-3 km AGL, while TCTP expects 0-1 km AGL. 
             attrs = {'long_name': 'TC tornado parameter'}
-            data = xarray.DataArray(data=tctp_0_3kmsrh, name=field, attrs=attrs)
+            data = xarray.DataArray(data=tctp, name=field, attrs=attrs)
+        if field == 'tctp2014':
+            RH24 = scalardata('rh700', valid_time)
+            tctp = bulk_shear/(11*units.parse_expression('m/s')) * srh/(40*units.parse_expression('m**2/s**2')) *  RH24/(80*units.percent)
+            attrs = {'long_name': 'TC tornado parameter Eastin et al. 2014'}
+            data = xarray.DataArray(data=tctp, name=field, attrs=attrs)
     elif field=='lcl':
-        parcel = info["parcel"]
-        # .fillna() to eliminate RuntimeWarning: overflow encountered in exp and RuntimeWarning: invalid value encountered in true_divide
-        # metpy.calc.lcl() takes and returns pint.Quantitys not xarrays.
-        pres = data['PRES_221_HTGL'].metpy.dequantify().fillna(101315).metpy.sel(vertical=parcel)
-        temp = data['TMP_221_HTGL'].metpy.dequantify().fillna(273).metpy.sel(vertical=parcel)
-        dwpt = data['DPT_221_HTGL'].metpy.dequantify().fillna(273) # no vertical coordinate to select, for some reason
-        LCL_pressure, LCL_temperature = mcalc.lcl(pres, temp, dwpt)
-        # Transfer coords and dims from pres because LCL_pressure is only a pint.Quantity.
-        data = xarray.zeros_like(data['DPT_221_HTGL']) # dpt has no vertical, for some reason
-        data.name=field
-        data.values = LCL_pressure
-        data.attrs["long_name"] = f"pressure of lifted condensation level from metpy.calc.lcl using {parcel} parcel"
+        data.attrs["long_name"] = f"pressure of lifted condensation level from surface parcel" # zlcl long_name based on this
     elif field=='zlcl':
-        LCL_pressure = scalardata('lcl', valid_time, targetdir=targetdir, debug=debug)
+        LCL_pressure = scalardata('lcl', valid_time, targetdir=targetdir)
         hgt3D = data["HGT_221_ISBL"] 
-        ifile = get(None, targetdir=targetdir, narrtype=narrFixed)
-        nc = xarray.open_dataset(ifile)
-        surface_height = nc[fieldinfo["surface_height"]["fname"]].metpy.quantify()
-        nc.close()
         data = pressure_to_height(LCL_pressure, hgt3D)
         data = data - surface_height
         data.attrs['long_name']=LCL_pressure.attrs["long_name"].replace("pressure of", "height AGL of")
+        data.name = field # vertical() needs data.name
     else:
         if 'sel' in info: # this is a component of a vector
             attrs = data[info["sel"][0]].attrs # remember attributes of sel component before .to_array removes them
             data = data.to_array(dim="uv") # convert from Dataset with 2 DataArrays to single DataArrray
             data.attrs = attrs # for long_name 
-    data = myunits(data, info, debug=debug)
-    data = vertical(data, info, debug=debug)
-    data = temporal(data, info, debug=debug)
+    data = myunits(data, info)
+    data = vertical(data, info)
+    data = temporal(data, info)
 
     data.attrs['field'] = field
     data.attrs['ifile'] = ifile_basename
@@ -585,25 +601,24 @@ def scalardata(field, valid_time, targetdir=".", debug=False):
     return data
 
 
-def vectordata(field, valid_time, targetdir=".", debug=False):
+def vectordata(field, valid_time, targetdir=targetdir):
     # Get color map, levels, and netCDF variable name appropriate for requested variable (from fieldinfo module).
     info = fieldinfo[field]
     logging.debug(f"vectordata(): field={field} info={info}")
-    if debug:
-        pdb.set_trace()
-    if field[0:3] == "shr":
-        u,v = shear(field, valid_time, targetdir=targetdir, debug=debug)
-        u = temporal(u, info, debug=debug) # shear doesn't apply temporal like scalardata does.
-        v = temporal(v, info, debug=debug)
+    if field.startswith("shr"):
+        u,v = shear(field, valid_time, targetdir=targetdir)
+        u = temporal(u, info) # shear doesn't apply temporal like scalardata does.
+        v = temporal(v, info)
         uv = xarray.merge([u,v]).to_array(dim="uv") # Tried concat, but didn't preserve the dataarray names or uv coordinate values (needed for uvsel).
         uv.attrs.update(info) # shear() doesn't copy over attributes like scalardata does
         uv.attrs.update(u.attrs)
     elif field.endswith("flux"):
-        uv = scalardata(field, valid_time, targetdir=targetdir, debug=debug)
+        uv = scalardata(field, valid_time, targetdir=targetdir)
     else:
-        uname = 'u'+str(info['vertical'].m)
+        uname = f"u{info['vertical']}"
+        uname = uname.replace(" ","")
         if uname == 'u10': uname = 'u10m' 
-        uv = scalardata(uname, valid_time, targetdir=targetdir, debug=debug)
+        uv = scalardata(uname, valid_time, targetdir=targetdir)
 
     # Fix sel attribute
     uv.attrs["sel"] = uv.uv.values # select all (both) dimensions
@@ -614,7 +629,7 @@ def vectordata(field, valid_time, targetdir=".", debug=False):
 
 
 
-def fromskewtds(nc, field, debug=False):
+def fromskewtds(nc, field):
     # Used by NARR_lineplot.py
     # input:
     # nc: xarray Dataset with u, v, t, sh, hgt
@@ -634,8 +649,6 @@ def fromskewtds(nc, field, debug=False):
         return relative_humidity.sel(lv_ISBL0 = int(hPa)*units.hPa) # pressure level units ignored but included for clarity
     # Don't derive fields here that can easily be created by NARR_composite.py
     # for example, speed, shr10_700, theta2, thetae2, etc.
-    if debug:
-        pdb.set_trace()
     # Also avoid ValueError: all the input arrays must have same number of dimensions, but the array at index 0 has 2 dimension(s) and the array at index 1 has 1 dimension(s)
     if field == 'scp' or field == 'stp' or field == 'tctp':
         hgts = nc['hgt'].compute()
@@ -671,60 +684,6 @@ def fromskewtds(nc, field, debug=False):
 
         t1_stop = perf_counter()
         print("Elapsed time:", t1_stop-t1_start, 's')
-        pdb.set_trace()
-        u6, v6 = u.sel(hgt=6*units('km')), v.sel(hgt=6*units('km'))
-        u0, v0 = u.sel(hgt=0*units('km')), v.sel(hgt=0*units('km'))
-        bulk_shear = mcalc.wind_speed(u6-u0, v6-v0)
-        lifted_condensation_level_height = scalardata('zlcl', valid_time, targetdir=targetdir, debug=debug)
-       
-        if field == 'scp':
-            # In SPC help, cin is positive in SCP formulation.
-            cin_term = -40/cin
-            cin_term = cin_term.where(cin < -40, other=1)
-            scp = mcalc.supercell_composite(cape, srh, bulk_shear) * cin_term.metpy.unit_array
-            attrs = {'long_name': 'supercell composite parameter'}
-            data = xarray.DataArray(data=scp, name=field, attrs=attrs) 
-        if field == 'stp':
-            cin_term = (200+cin)/150
-            cin_term = cin_term.where(cin <= -50, other=1)
-            cin_term = cin_term.where(cin >= -200, other=0)
-            # CAPE, srh, bulk_shear, cin may be one vertical level, but LCL may be multiple heights.
-            # xarray.broadcast() makes them all multiple heights with same shape, so significant_tornado doesn't 
-            # complain about expecting lat/lon 2 dimensions and getting 3 dimensions..
-            (cape, lifted_condensation_level_height, srh, bulk_shear, cin_term) = xarray.broadcast(cape, lifted_condensation_level_height, srh, bulk_shear, cin_term)
-            # Caveat, NARR storm relative helicity (srh) is 0-3 km AGL, while STP expects 0-1 km AGL. 
-            # Tried to ignore non-finite elements to avoid RuntimeWarning: invalid value encountered in greater/less but couldn't use 2-d boolean indexing with cape
-            # cape and bulk_shear have different nans
-            stp = mcalc.significant_tornado(cape, lifted_condensation_level_height, srh, bulk_shear) * cin_term.metpy.unit_array
-            attrs = {'long_name': 'significant tornado parameter'} # , 'verttitle':lifted_condensation_level_height.attrs['verttitle']} # don't want "2 meter" verttitle
-            data = xarray.DataArray(data=stp, name=field, attrs=attrs) 
-        if field == 'tctp':
-            tctp = srh/(40*units['m**2/s**2']) * bulk_shear/(12*units['m/s']) * (2000*units.meters - lifted_condensation_level_height)/(1400*units.meters)
-            # NARR storm relative helicity (srh) is 0-3 km AGL, while original TCTP expects 0-1 km AGL. 
-            # So the shear term is too large using the NARR srh. Normalize the srh term with a larger denominator. 
-            # In STP, srh is normalized by 150 m**2/s**2. Use that.
-            tctp_0_3kmsrh = srh/(150*units['m**2/s**2']) * bulk_shear/(12*units['m/s']) * (2000*units.meters - lifted_condensation_level_height)/(1400*units.meters)
-            attrs = {'long_name': 'TC tornado parameter'}
-            data = xarray.DataArray(data=tctp_0_3kmsrh, name=field, attrs=attrs)
-    elif field=='lcl':
-        pres = nc['p']
-        temp = temperature
-        dwpt = nc[info['fname'][2]]
-        LCL_pressure, LCL_temperature = mcalc.lcl(pres.fillna(pres.mean()), temp.fillna(temp.mean()), dwpt.fillna(dwpt.mean()))
-        attrs = {"long_name":"pressure of lifted condensation level", "from":"metpy.calc.lcl"}
-        # assign coords and dims manually because LCL_pressure is only an array of Pint quantities. 
-        data = xarray.DataArray(data = LCL_pressure, coords=pres.coords, dims=pres.dims, name='LCL', attrs=attrs)
-    elif field=='zlcl':
-        LCL_pressure = scalardata('lcl', valid_time, targetdir=targetdir, debug=debug)
-        ifile = get(valid_time, targetdir=targetdir, narrtype=narr3D)
-        hgt3D = data["HGT_221_ISBL"] 
-        data = pressure_to_height(LCL_pressure, hgt3D)
-        ds = xarray.open_dataset(ifile)
-        surface_height = ds[fieldinfo["surface_height"]["fname"]].metpy.quantify()
-        ds.close()
-        print('subtract surface height')
-        data = data - surface_height
-        data.attrs['long_name']=LCL_pressure.attrs["long_name"].replace("pressure of", "height AGL of")
     elif field=='srh1':
         print(f"Can't derive {field} yet")
     elif field=='srh3':
