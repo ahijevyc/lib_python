@@ -102,7 +102,7 @@ def spc_lsr_filename(event_type, latestyear=2020):
 
 
 def get_storm_reports( start = datetime.datetime(2016,6,10,tzinfo=pytz.UTC), end = datetime.datetime(2016,7, 1,tzinfo=pytz.UTC), 
-        event_types = ["torn", "wind", "hail"], latestyear = 2020, debug = False):
+        event_types = ["torn", "wind", "hail"], latestyear = 2020):
 
     # Return a DataFrame with local storm reports (LSRs) downloaded from SPC.
     # Choices are tornado, hail, and/or wind.
@@ -113,15 +113,13 @@ def get_storm_reports( start = datetime.datetime(2016,6,10,tzinfo=pytz.UTC), end
     #   end   - end of time window, includes end. timezone aware datetime
     #   event_types - list of event types
     #   latestyear - most recent year in SPC file. 4-digit year
-    #   debug - If True, print debugging information.
     # OUTPUT
     #   rpts - DataFrame with time, location, and description of event (LSR)
 
 
-    if debug:
-        print("get_storm_reports: start:",start)
-        print("get_storm_reports: end:",end)
-        print("get_storm_reports: event types:",event_types)
+    logging.debug(f"get_storm_reports: start:{start}")
+    logging.debug(f"get_storm_reports: end:{end}")
+    logging.debug(f"get_storm_reports: event types:{event_types}")
 
 
     # Create one DataFrame with all requested LSR event types.
@@ -204,24 +202,21 @@ def get_storm_reports( start = datetime.datetime(2016,6,10,tzinfo=pytz.UTC), end
         # MDT is equivalent to CST. Therefore, change tz=6 (MDT) to tz=3 (CST).
         # Wrote to SPC Apr 1 2019 about fixing these lines.
         MDT = rpts['tz'] == 6
-        if debug:
-            print(f"spc.get_storm_reports(): found",MDT.sum(),f"{event_type} in MDT")
-            print(rpts.loc[MDT, ['om','date_time','tz','event_type', 'source']], file=sys.stderr)
-            print("changing tz from 6 to 3 because CST=MDT")
+        logging.debug(f"spc.get_storm_reports(): found {MDT.sum()} {event_type} in MDT")
+        logging.debug(rpts.loc[MDT, ['om','date_time','tz','event_type', 'source']])
+        logging.debug("changing tz from 6 to 3 because CST=MDT")
         rpts.loc[MDT, "tz"] = 3
 
         # Convert GMT(UTC) date_times to CST
         GMT = rpts.tz == 9
-        if debug:
-            print(f"spc.get_storm_reports(): found",GMT.sum(),f"{event_type} in GMT")
+        logging.debug(f"spc.get_storm_reports(): found {GMT.sum()} {event_type} in GMT")
         rpts.loc[GMT, "date_time"] = rpts.loc[GMT, "date_time"] - datetime.timedelta(hours=6)
         rpts.loc[GMT, "tz"] = 3
 
         # Don't know what to with date_times with unknown time zones. They're treated like CST when converted to UTC below. 
         unknown_tz = rpts['tz'] == 0
-        if debug:
-            print(f"spc.get_storm_reports(): found",unknown_tz.sum(),f"{event_type} in unknown time zone")
-            print(rpts.loc[unknown_tz, ['om','date_time','tz','event_type', 'source']], file=sys.stderr)
+        logging.debug(f"spc.get_storm_reports(): found {unknown_tz.sum()} {event_type} in unknown time zone")
+        logging.debug(rpts.loc[unknown_tz, ['om','date_time','tz','event_type', 'source']])
 
         """
         Wrote to SPC Apr 1 2019 about fixing tz!=3 lines.
@@ -282,11 +277,10 @@ def get_storm_reports( start = datetime.datetime(2016,6,10,tzinfo=pytz.UTC), end
         # Used to say rpts.time < end. But if rpts.time == end it would not get included. 
         time_window = (rpts.time >= start) & (rpts.time <= end)
         rpts = rpts[time_window]
-        if debug:
-            print("found",len(rpts),event_type,"reports")
+        logging.debug(f"found {len(rpts)} {event_type} reports")
 
 
-        RyanSobashSanityCheck = debug
+        RyanSobashSanityCheck = False
         if RyanSobashSanityCheck:
             # Verify I get the same thing as Ryan Sobash's sqlite3 database
             sql_df, RyanSobash_file = RyanSobash(start=start, end=end, event_type=event_type)
@@ -299,9 +293,8 @@ def get_storm_reports( start = datetime.datetime(2016,6,10,tzinfo=pytz.UTC), end
                 epoch2 = os.path.getmtime(RyanSobash_file)
                 if epoch2 > epoch1:
                     print("Ryan's database modified more recently but it may have duplicate reports.")
-                if debug:
-                    print("Mod date of SPC reports file:    ", datetime.datetime.fromtimestamp(epoch1).strftime('%c'))
-                    print("Mod date of Ryan's SQL database: ", datetime.datetime.fromtimestamp(epoch2).strftime('%c'))
+                logging.debug(f"Mod date of SPC reports file:    {datetime.datetime.fromtimestamp(epoch1).strftime('%c')}")
+                logging.debug(f"Mod date of Ryan's SQL database: {datetime.datetime.fromtimestamp(epoch2).strftime('%c')}")
             elif any(sql_df.datetime.reset_index(drop=True) != rpts.time.reset_index(drop=True)): # Times don't all match
                 print(f'spc.get_storm_reports(): {event_type} {start}-{end}')
                 print("spc.read(): my database and Ryan's have same # of reports in the requested time window but the times aren't equal")
