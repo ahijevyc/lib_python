@@ -1,6 +1,7 @@
 import collections
 import datetime
 import numpy as np
+import logging
 import os
 import pandas as pd
 import pdb
@@ -36,32 +37,32 @@ def download(start, end, bucket="noaa-goes17", product="GLM-L2-LCFA", odir=GLMDI
     for hourly in pd.date_range(start=start, end=end, freq='1H'):
         # download all files in an hourly directory
         path = f'{bucket}/{product}/{hourly.year}/{hourly.timetuple().tm_yday:03.0f}/{hourly.hour:02.0f}'
+        logging.info(f"fs.ls({path})")
         files = fs.ls(path)
 
         if len(files) == 0:
             while len(fs.ls(path)) == 0:
-                print("No files match", path)
+                logging.error(f"No files match {path}")
                 path = "/".join(path.split("/")[:-1]) # parent directory
-                print("choices", fs.ls(path))
+                logging.error(f"choices {fs.ls(path)}")
             sys.exit(1)
 
-        if debug:
-            print(f"{len(files)} files {odir}")
+        logging.debug(f"{len(files)} files {odir}")
         for f in files:
             if get_GLM_timestamp(f) < start:
-                if debug: print(f, 'before start')
+                logging.debug(f"{f} before start")
                 continue
             if get_GLM_timestamp(f) >= end:
-                if debug: print(f, 'at or past end')
+                logging.debug(f"{f} at or past end")
                 continue
 
             ofiles.append(odir+f)
             if os.path.exists(odir+f) and not clobber:
-                if debug: print(f, 'already downloaded')
+                logging.debug(f"{f} already downloaded")
             else:
                 os.makedirs(os.path.dirname(odir+f), exist_ok=True) # Avoid FileNotFoundError: [Errno 2] No such file or directory:
                 fs.get(f, odir+f) # TODO: is fs.download different()? similar times...
-                print('downloaded', f)
+                logging.info(f"downloaded {f}")
 
     return ofiles
 
@@ -95,8 +96,7 @@ def flashOK(ds, debug=False):
     # it's a bad flash. Change good[i] to False, where i is the index of the flash.
     good = ~ds.flash_id.isnull()
     for i, flash_id in enumerate(ds.flash_id.values):
-        if debug:
-            print('checking flash', flash_id)
+        logging.debug(f'checking flash {flash_id}')
         group_ids = group_ids_in_flash(ds, flash_id).values
         if group_ids.size >= 3:
             continue
@@ -106,8 +106,7 @@ def flashOK(ds, debug=False):
             if nevents >= 4:
                 continue
         if nevents < 4:
-            if debug:
-                print('flash', flash_id, len(group_ids), 'groups', nevents, 'events')
+            logging.debug(f'flash {flash_id} {len(group_ids)} groups {nevents} events')
             good[i] = False
 
     return good
@@ -115,19 +114,17 @@ def flashOK(ds, debug=False):
 def mask_bad_groups_and_flashes(ds, debug=False):
     das, _ =  get_das(ds)
     #TODO: Find groups with just one event.
-    if debug:
-        print("group QC")
+    logging.debug("group QC")
     # If group_id is in event_parent_group_id (i.e. associated with at least one event) then it's OK. 
     groupOK = ds.group_id.isin(ds.event_parent_group_id)
     # mention how many are not OK
     nempty = (~groupOK).sum().values
     if nempty:
-        print(f"{nempty} empty groups {ds.group_id[~groupOK].values}")
+        logging.info(f"{nempty} empty groups {ds.group_id[~groupOK].values}")
     ds[das["group"]] = ds[das["group"]].where(groupOK)
 
     # Remove flashes with small number of events.
-    if debug:
-        print("flash QC")
+    logging.debug("flash QC")
     ds[das["flash"]] = ds[das["flash"]].where(flashOK(ds, debug=debug))
     return ds
 
@@ -157,9 +154,9 @@ def read(GLMfiles, qc=0, debug=False):
             flash_ids = np.concatenate([flash_ids, ds.flash_id])
             flash_time_offsets = np.concatenate([flash_time_offsets, ds.flash_frame_time_offset_of_first_event])
             ds.close()
-        print(collections.Counter(flash_ids).most_common(1))
+        logging.info(collections.Counter(flash_ids).most_common(1))
         for ftype, das in das.items():
-            print(f"concatenating {das}")
+            logging.info(f"concatenating {das}")
             ds[ftype] = xarray.concat([ds[das] for ds in [xarray.open_dataset(GLMfile) for GLMfile in GLMfiles]], dim, combine_attrs="drop_conflicts")
 
 
@@ -176,7 +173,7 @@ def read(GLMfiles, qc=0, debug=False):
 
     for GLMfile in GLMfiles:
         ds = xarray.open_dataset(GLMfile)
-        if debug: print(GLMfile)
+        logging.debug(GLMfile)
         
         # Mask bad groups and flashes
         if qc >= 2:
