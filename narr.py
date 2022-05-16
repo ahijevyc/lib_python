@@ -150,7 +150,6 @@ fieldinfo['rhlev1']['fname'] = 'R_H_221_HYBL'
 fieldinfo['rhlev1']['vertical'] = 'lowest model level'
 fieldinfo['scp'] = fieldinfo['stp'] # stp is in fieldinfo.py not scp 
 fieldinfo['scp']['fname'] = ['CAPE_221_SFC','CIN_221_SFC','HLCY_221_HTGY']
-fieldinfo['scp']['shear_layer'] = 'shr10m_500hPa'
 fieldinfo['sh2']    = {'levels' : [0.5,1,2,4,8,12,14,16,17,18,19,20,21,22,23,24], 'cmap':fieldinfo['td2']['cmap'], 'fname': 'SPF_H_221_HTGL', 'vertical':2*units.meters, 'units':'g/kg'}
 fieldinfo['shlev1'] = {'levels' : [0.5,1,2,4,8,12,14,16,17,18,19,20,21,22,23,24], 'cmap':fieldinfo['td2']['cmap'], 'fname': 'SPF_H_221_HYBL', 'vertical':'lowest model level', 'units':'g/kg'}
 fieldinfo['shr10m_30m']  = fieldinfo['speed10m'].copy()
@@ -172,7 +171,6 @@ fieldinfo['surface_height']['fname'] = 'HGT_221_SFC'
 fieldinfo['t2']['fname'] = 'TMP_221_SFC'
 fieldinfo['t2']['units'] = 'degF'
 fieldinfo['tctp'] = fieldinfo['scp']
-fieldinfo['tctp']['shear_layer'] = 'shr10m_3000m'
 fieldinfo['tctp2014'] = fieldinfo['tctp'].copy()
 fieldinfo['thetasfc'] = {'levels' : np.arange(290,320,2), 'cmap': ['#eeeeee', '#dddddd', '#cccccc', '#aaaaaa']+readNCLcm('precip2_17lev')[3:-1], 'fname'  : 'POT_221_SFC'}
 fieldinfo['theta2']   = {'levels' : np.arange(294,313,1), 'cmap': ['#eeeeee', '#dddddd', '#cccccc', '#aaaaaa']+readNCLcm('precip2_17lev')[3:-1], 'fname'  : ['PRES_221_HTGL', 'TMP_221_HTGL'], 'vertical':2*units.meters}
@@ -540,16 +538,17 @@ def scalardata(field, valid_time, targetdir=targetdir):
         data.attrs['long_name'] = "equivalent potential temperature"
     elif field == 'scp' or field == 'stp' or field.startswith('tctp'):
         cape, cin, srh = data.data_vars.values()
-        bulk_shear = scalardata(info['shear_layer'], valid_time, targetdir=targetdir)
         lifted_condensation_level_height = scalardata('zlcl', valid_time, targetdir=targetdir)
         if field == 'scp':
+            bulk_shear = scalardata('shr10m_500hPa', valid_time, targetdir=targetdir)
             # In SPC help, cin is positive in SCP formulation.
             cin_term = -40 * units.parse_expression("J/kg")/cin
             cin_term = cin_term.where(cin < -40*units.parse_expression("J/kg"), other=1)
             scp = mcalc.supercell_composite(cape, srh, bulk_shear) * cin_term.metpy.unit_array
             attrs = {'long_name': 'supercell composite parameter'}
             data = xarray.DataArray(data=scp, name=field, attrs=attrs) 
-        if field == 'stp':
+        elif field == 'stp':
+            bulk_shear = scalardata('shr10m_500hPa', valid_time, targetdir=targetdir)
             cin_term = (200*units.parse_expression("J/kg") +cin)/(150*units.parse_expression("J/kg"))
             cin_term = cin_term.where(cin <= -50*units.parse_expression("J/kg"), other=1)
             cin_term = cin_term.where(cin >= -200*units.parse_expression("J/kg"), other=0)
@@ -563,15 +562,16 @@ def scalardata(field, valid_time, targetdir=targetdir):
             stp = mcalc.significant_tornado(cape, lifted_condensation_level_height, srh, bulk_shear) * cin_term.metpy.unit_array
             attrs = {'long_name': 'significant tornado parameter'} # , 'verttitle':lifted_condensation_level_height.attrs['verttitle']} # don't want "2 meter" verttitle
             data = xarray.DataArray(data=stp, name=field, attrs=attrs) 
-        if field == 'tctp':
-            tctp = srh/(40*units.parse_expression('m**2/s**2')) * bulk_shear/(12*units.parse_expression('m/s')) * (2000*units.meters - lifted_condensation_level_height)/(1400*units.meters)
-            # NARR storm relative helicity (srh) is 0-3 km AGL, while TCTP expects 0-1 km AGL. 
-            attrs = {'long_name': 'TC tornado parameter'}
-            data = xarray.DataArray(data=tctp, name=field, attrs=attrs)
-        if field == 'tctp2014':
-            RH24 = scalardata('rh700', valid_time)
-            tctp = bulk_shear/(11*units.parse_expression('m/s')) * srh/(40*units.parse_expression('m**2/s**2')) *  RH24/(80*units.percent)
-            attrs = {'long_name': 'TC tornado parameter Eastin et al. 2014'}
+        elif field.startswith('tctp'):
+            bulk_shear = scalardata('shr10m_3000m', valid_time, targetdir=targetdir)
+            if field == 'tctp':
+                tctp = srh/(40*units.parse_expression('m**2/s**2')) * bulk_shear/(12*units.parse_expression('m/s')) * (2000*units.meters - lifted_condensation_level_height)/(1400*units.meters)
+                # NARR storm relative helicity (srh) is 0-3 km AGL, while TCTP expects 0-1 km AGL. 
+                attrs = {'long_name': 'TC tornado parameter'}
+            elif field == 'tctp2014':
+                RH24 = scalardata('rh700', valid_time)
+                tctp = bulk_shear/(11*units.parse_expression('m/s')) * srh/(40*units.parse_expression('m**2/s**2')) *  RH24/(80*units.percent)
+                attrs = {'long_name': 'TC tornado parameter Eastin et al. 2014'}
             data = xarray.DataArray(data=tctp, name=field, attrs=attrs)
     elif field=='lcl':
         data.attrs["long_name"] = f"pressure of lifted condensation level from surface parcel" # zlcl long_name based on this
