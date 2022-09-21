@@ -1,4 +1,3 @@
-import atcf # for atcf.dist_bearing(). Maybe delete in favor of cartopy.geodesic.inverse()
 import cartopy
 import cartopy.geodesic
 import datetime
@@ -16,10 +15,11 @@ import requests # for stormEvents()
 from   scipy import spatial
 import scipy.ndimage as ndimage
 from scipy.stats import circmean # To average longitudes
+from scipy.stats import gaussian_kde
 import seaborn as sns
 import sqlite3
 import sys # for stderr output
-
+import xarray
 
 def getTCTOR(rename=True):
     # Tropical Cyclone Tornado (TCTOR) database from Roger Edwards (SPC)
@@ -66,6 +66,8 @@ def RyanSobash(start=None, end=None, event_type="torn"):
     # make it aware of its UTC timezone.
     sql_df["datetime"] = sql_df["datetime"].dt.tz_localize(pytz.UTC)
     sql_df = sql_df[(sql_df.datetime >= start) & (sql_df.datetime < end)]
+    sql_df = sql_df.sort_values(by=["datetime","slon","slat"]).set_index("datetime") # did this with SPC too ("time" instead of "datetime")
+
     sql_df["dbfile"] = sobash_db
     logging.debug(f"From Ryan's SQL database {sobash_db}")
     logging.debug(sqlcommand)
@@ -102,7 +104,7 @@ def spc_lsr_filename(event_type, latestyear=2020):
 
 
 def get_storm_reports( start = datetime.datetime(2016,6,10,tzinfo=pytz.UTC), end = datetime.datetime(2016,7, 1,tzinfo=pytz.UTC), 
-        event_types = ["torn", "wind", "hail"], latestyear = 2020):
+        event_types = ["torn", "wind", "hail"], latestyear = 2020, RyanSobashSanityCheck=False):
 
     # Return a DataFrame with local storm reports (LSRs) downloaded from SPC.
     # Choices are tornado, hail, and/or wind.
@@ -117,9 +119,9 @@ def get_storm_reports( start = datetime.datetime(2016,6,10,tzinfo=pytz.UTC), end
     #   rpts - DataFrame with time, location, and description of event (LSR)
 
 
-    logging.debug(f"get_storm_reports: start:{start}")
-    logging.debug(f"get_storm_reports: end:{end}")
-    logging.debug(f"get_storm_reports: event types:{event_types}")
+    logging.info(f"get_storm_reports: start:{start}")
+    logging.info(f"get_storm_reports: end:{end}")
+    logging.info(f"get_storm_reports: event types:{event_types}")
 
 
     # Create one DataFrame with all requested LSR event types.
@@ -277,84 +279,93 @@ def get_storm_reports( start = datetime.datetime(2016,6,10,tzinfo=pytz.UTC), end
         # Used to say rpts.time < end. But if rpts.time == end it would not get included. 
         time_window = (rpts.time >= start) & (rpts.time <= end)
         rpts = rpts[time_window]
+
+        rpts = rpts.sort_values(by=["time","slon","slat"]).set_index("time")
         logging.debug(f"found {len(rpts)} {event_type} reports")
 
 
-        RyanSobashSanityCheck = False
         if RyanSobashSanityCheck:
             # Verify I get the same thing as Ryan Sobash's sqlite3 database
             sql_df, RyanSobash_file = RyanSobash(start=start, end=end, event_type=event_type)
 
-            # See if they have the same number of rows
-            if len(sql_df) != len(rpts):
-                print(f'spc.get_storm_reports(): {event_type} {start}-{end}')
-                print("SPC has", len(rpts),"reports, but Ryan's SQL database has",len(sql_df),".")
+            if rpts.empty and sql_df.empty:
+                logging.info(f"No {event_type} reports in spc or Ryan's database")
+                pass
+            elif len(sql_df) != len(rpts): # See if they have the same number of rows
+                logging.warning(f"SPC has {len(rpts)} {event_type} reports, but Ryan's SQL database has {len(sql_df)}.")
                 epoch1 = os.path.getmtime(rpts_file)
                 epoch2 = os.path.getmtime(RyanSobash_file)
                 if epoch2 > epoch1:
-                    print("Ryan's database modified more recently but it may have duplicate reports.")
-                logging.debug(f"Mod date of SPC reports file:    {datetime.datetime.fromtimestamp(epoch1).strftime('%c')}")
-                logging.debug(f"Mod date of Ryan's SQL database: {datetime.datetime.fromtimestamp(epoch2).strftime('%c')}")
-            elif any(sql_df.datetime.reset_index(drop=True) != rpts.time.reset_index(drop=True)): # Times don't all match
-                print(f'spc.get_storm_reports(): {event_type} {start}-{end}')
-                print("spc.read(): my database and Ryan's have same # of reports in the requested time window but the times aren't equal")
-                print("so I can't easily compare the lat and lons")
-                print(rpts)
-                print(sql_df)
-                print("oh well")
+                    logging.warning("Ryan's database modified more recently but it may have duplicate reports.")
+                logging.info(f"Mod date of SPC reports file:    {datetime.datetime.fromtimestamp(epoch1).strftime('%c')}")
+                logging.info(f"Mod date of Ryan's SQL database: {datetime.datetime.fromtimestamp(epoch2).strftime('%c')}")
+            elif not sql_df.index.equals(rpts.index): # Times don't all match
+                logging.info("Ryan's database has same # of reports but times aren't equal. Can't easily compare the lat and lons")
+                print(f"SPC\n{rpts}")
+                print(f"Ryan's\n{sql_df}")
             else:
-                # See if they have the same times (must have same number of lines to test like this)
-                if (sql_df["datetime"].values != rpts["time"].values).any():
-                    print("spc.get_storm_reports(): My data times don't match Ryan's SQL database")
                 # See if they have the same locations
                 same_columns = ["slat", "slon", "elat", "elon"]
-                if (sql_df[same_columns].values != rpts[same_columns].values).any():
-                    print("SPC locations don't match Ryan's SQL database")
-                    # TODO: just show offending rows, but all columns
-                    mine = rpts[same_columns]
-                    his  = sql_df[same_columns]
+                mismatch = (sql_df[same_columns] != rpts[same_columns]).any(axis="columns")
+                if mismatch.any(): # any rows and any columns
+                    logging.warning("SPC locations don't match Ryan's SQL database")
+                    mine = rpts.loc[mismatch,same_columns]
+                    his  = sql_df.loc[mismatch,same_columns]
                     print("SPC minus Ryan")
-                    print(mine-his)
-                    max_abs_difference = np.abs(his.values-mine.values).max()
-                    print("max abs difference", max_abs_difference)
+                    difference = mine-his
+                    print(difference)
+                    max_abs_difference = difference.abs().max().max()
+                    logging.warning(f"max abs difference {max_abs_difference}")
                     if max_abs_difference < 0.000001:
-                        print("who cares about such a small difference?")
+                        logging.info("who cares about such a small difference?")
                     elif max_abs_difference < 0.1:
                         pass
                     else:
+                        logging.error("That's concerning")
                         pdb.set_trace()
                         sys.exit(1)
 
-        all_rpts = all_rpts.append(rpts, ignore_index=True, sort=False) # Append this storm report type
+        all_rpts = all_rpts.append(rpts) # Append this storm report type
 
     return all_rpts
 
 def symbol_dict(scale=1):
     # Color, size, marker, and label of wind, hail, and tornado storm reports
-    return {
+    d = {
             "wind":       {"c" : 'blue',  "s": 8*scale, "marker":"s", "label":"Wind"},
-            "high wind":  {"c" : 'black', "s":12*scale, "marker":"s", "label":"Wind/HI"},
+            "high wind":  {"c" : 'black', "s":12*scale, "marker":"s", "label":"Wind/65kt+"},
             "hail":       {"c" : 'green', "s":12*scale, "marker":"^", "label":"Hail"},
-            "large hail": {"c" : 'black', "s":16*scale, "marker":"^", "label":"Hail/LG"},
-            "torn":       {"c" : 'pink',"s": 6*scale, "marker":"v", "label":"Torn"},
-            "sigtorn":    {"c" : 'pink',"s":12*scale, "marker":"v", "label":"Torn/EF2+"}
-            }
+            "large hail": {"c" : 'black', "s":16*scale, "marker":"^", "label":'Hail/2"+'},
+            "torn":       {"c" : 'red',"s": 6*scale, "marker":"v", "label":"Torn"}, # pink was okay too
+            "sigtorn":    {"c" : 'red',"s":12*scale, "marker":"v", "label":"Torn/EF2+"}
+         }
+    for k in d:
+        d[k]["edgecolors"]="black"
+        d[k]["linewidths"] = 0.1
+    d["F-sum"] = d["torn"].copy()
+    return d
+
+# Tried including units but DataArray.plot.contour chokes on the levels with pint.error
+kdelevels = {
+        "torn":np.arange(0,4,0.4)*1e-4,
+        "F-sum":np.arange(0,4,0.4)*1e-4,
+        "wind":np.arange(0,5,0.5)*1e-4,
+        "hail":np.arange(0,5,0.5)*1e-4
+        }
 
 
-def plotgridded(storm_reports, ax, gridlat2D=None, gridlon2D=None, scale=1, sigma=1, alpha=0.5, event_types=["wind", "high wind", "hail", "large hail", "torn"], 
-        debug=False):
+
+def plotgridded(storm_reports, ax, gridlat2D=None, gridlon2D=None, scale=1, sigma=1, alpha=0.5, event_types=["wind", "high wind", "hail", "large hail", "torn"]):
 
 
     # Default dx and dy of 81.2705km came from https://www.nco.ncep.noaa.gov/pmb/docs/on388/tableb.html#GRID211
     if storm_reports.empty:
-        if debug:
-            print("spc.plotgridded(): storm reports DataFrame is empty. data_gridded will be all zeros.")
+        logging.debug("spc.plotgridded(): storm reports DataFrame is empty. data_gridded will be all zeros.")
 
     storm_rpts_gridded = {}
 
     for event_type in event_types:
-        if debug:
-            print("looking for "+event_type)
+        logging.debug("looking for "+event_type)
         xrpts = storm_reports[storm_reports.event_type == event_type]
         print("plot",len(xrpts),event_type,"reports")
         # Used to skip to next iteration if there were zero reports, but you want grid even if it is all zeros.
@@ -371,9 +382,7 @@ def plotgridded(storm_reports, ax, gridlat2D=None, gridlon2D=None, scale=1, sigm
         data_gridded = data_gridded.reshape(gridlon2D.shape)
 
         if sigma > 0:
-            if debug:
-                print("about to run Gaussian smoother")
-                pdb.set_trace()
+            logging.debug("about to run Gaussian smoother")
             # I'm uncomfortable doing this in map space but it is fast
             data_gridded = ndimage.gaussian_filter(data_gridded, sigma=sigma)
 
@@ -395,10 +404,10 @@ def plotgridded(storm_reports, ax, gridlat2D=None, gridlon2D=None, scale=1, sigm
 
 def centroid_polar(theta_deg, r):
     # locate centroid of this event type
-    east = r * np.sin(np.radians(theta_deg))
-    north = r * np.cos(np.radians(theta_deg))
-    logging.debug(f"spc.centroid_polar(): east {east:.2f}")
-    logging.debug(f"spc.centroid_polar(): north {north:.2f}")
+    east = r * np.sin(theta_deg)
+    north = r * np.cos(theta_deg)
+    logging.debug(f"spc.centroid_polar(): east {east}")
+    logging.debug(f"spc.centroid_polar(): north {north}")
     east = east.mean()
     north = north.mean()
     logging.debug(f"east mean {east:.2f} north mean {north:.2f}")
@@ -418,106 +427,189 @@ def combine_significant(storm_reports):
     storm_reports.loc[sighail, "event_type"] = "hail"
     return storm_reports
 
+def fill_NaNs_with_neighbors2d(array2d):
+    # Fill NaNs with neighbors
+    # Input DataArray
+    # convert to ndarray
+    values = array2d.values
+    values = pd.DataFrame(values)
+    # operate on DataFrame
+    values = values.interpolate(limit_direction='both') # goofy around NARR edges
+    if values.isnull().all().any(): # if any columns are all null
+        logging.warning("***Found nan in filled value array. trying to interpolate across columns***") # Think this is fine but not sure.
+        # Happens when you zoom in a lot.
+        values = values.interpolate(axis='columns')
+        if values[0].isnull().all(): # if column 0 is still all null, backfill from neighboring column
+            values.fillna(method="backfill", axis="columns", inplace=True)
+            logging.warning("***Backfilled missing data in column 0***")
+    # Output DataArray
+    array2d.values = values
+    return array2d
 
-def polarkdeplot(originlon, originlat, storm_reports, ax, zero_azimuth=0*units.deg, normalize_range_by=None, alpha=0.7, debug=False):
-    # Return dictionary where key/value pairs are { event_type : kdeplot }
+def fill_NaNs_with_neighbors(values):        
+    if len(values.shape) == 2:
+        return fill_NaNs_with_neighbors2d(values)
+    if len(values.shape) == 3:
+        for i, aa in enumerate(values):
+            aa = fill_NaNs_with_neighbors2d(aa)
+            values[i] = aa.values
+    return values
 
+
+def histogram2d_weighted(bearing, dist_from_center, azbins, rbins, data):
+    bins = [azbins, rbins]
+    bearing = bearing.values.flatten()
+    dist_from_center = dist_from_center.values.flatten()
+    data = data.metpy.dequantify() # move units to attrs dict so we may assign them to new DataArray.
+    n, _, _ = np.histogram2d(bearing, dist_from_center, bins=bins)
+    drs = np.diff(rbins) # bin widths
+    dazs = np.diff(azbins)
+    assert np.all(drs == drs[0]), "range bins not equal width"
+    assert np.all(dazs == dazs[0]), "azimuth bins not equal width"
+    range_center1D, theta_center1D = drs[0]/2+rbins[:-1], dazs[0]/2+azbins[:-1]
+    isvector = 'uv' in data.coords
+    if isvector:
+        weightedh2 = np.zeros((2, len(bins[0])-1, len(bins[1])-1))
+        weightedh2[0], _, _ = np.histogram2d(bearing, dist_from_center, bins=bins, weights=data.isel(uv=0).values.flatten())
+        weightedh2[1], _, _ = np.histogram2d(bearing, dist_from_center, bins=bins, weights=data.isel(uv=1).values.flatten())
+        coords={"uv": data.coords["uv"], "azimuth":theta_center1D, "range":range_center1D}
+    else:
+        weightedh2, _, _ = np.histogram2d(bearing, dist_from_center, bins=bins, weights=data.values.flatten())
+        coords={"azimuth":theta_center1D, "range":range_center1D}
+    n = np.ma.masked_where(n == 0,n)# avoid RuntimeWarning: invalid value encountered in true_divide
+    da = xarray.DataArray(data = weightedh2/n, coords=coords, dims=coords.keys(), attrs=data.attrs, name=data.name) 
+    # Fill NaNs with neighbors
+    da = fill_NaNs_with_neighbors(da)
+    da = da.metpy.quantify() # move units from attrs dict back to data array (make it a pint quantity)
+    return da
+
+
+def polarkde(originlon, originlat, storm_reports, ax, azbins, rbins, spc_td, ds=20*units.km, 
+        zero_azimuth=0*units.deg, normalize_range_by=None, add_colorbar=False):
+    # Return dictionary where key/value pairs are { event_type : kde on cartesian grid }
+    # Input
+    # azbins, rbins from NARR_composite.py
+    # spc_td SPC reports time window
+    # ds [km] spacing of Cartesian mesh grid on which smoothing is performed 
+    storm_rpts_kde = {}
     if storm_reports.empty:
-        logging.debug("spc.polarkdeplot(): storm reports DataFrame is empty. Returning None")
-        return None
+        logging.debug("spc.polarkde(): storm reports DataFrame is empty. Returning None")
+        return storm_rpts_kde
 
+    geo = cartopy.geodesic.Geodesic()
+    # Use .m because geo.inverse does not work with quantities.
+    n3 = geo.inverse((originlon.m, originlat.m), np.column_stack((storm_reports["slon"], storm_reports["slat"])))
+    n3 = np.asarray(n3) # convert cartopy MemoryView to ndarray
+    storm_reports["range"] = n3[:,0]/1000. # geo.inverse returns meters; convert to km
+    if normalize_range_by:
+        storm_reports["range"] /= normalize_range_by
+    storm_reports["heading"] = n3[:,1]  # in deg
+    storm_reports["heading"] = (storm_reports["heading"] - zero_azimuth.m + 720) % 360 # remove units from zero_azimuth, or it assumes other variables are radians.
+    rmax = ax.get_ylim()[1] * units.km
+    inrange = storm_reports["range"].values * units.km  < rmax # have to use .values because units won't stick to pandas Series.
+    storm_reports = storm_reports[inrange]
+    logging.debug(f"spc.polarplot(): found {inrange.sum()} reports inside axis range")
 
-    # Color, size, marker, and label of wind, hail, and tornado storm reports
-    kwdict = symbol_dict()
-    storm_rpts_plots = {}
-
-    lons, lats = storm_reports.slon.values*units.degrees_E, storm_reports.slat.values*units.degrees_N
-    r, heading = atcf.dist_bearing(originlon, originlat, lons, lats) # atcf.dist_bearing returns quantities with units (remember them)
-    storm_reports["range"], storm_reports["heading"] = r, heading
+    storm_reports = storm_reports[storm_reports["range"] < rbins.max()] # Throw out reports beyond max range
+    storm_reports = storm_reports.copy() # Avoid SettingWithCopyWarning
     for event_type, xrpts in combine_significant(storm_reports).groupby("event_type"):    
         logging.debug(f"spc.polarkdeplot(): found {len(xrpts)} {event_type} reports")
         if len(xrpts) < 3:
-            logging.debug("not enough pts for kdeplot")
-            return storm_rpts_plots
-        r = xrpts["range"].values * r.units
-        heading = xrpts["heading"].values * heading.units
+            logging.warning(f"not enough pts for {event_type} kdeplot")
+            continue
 
-        if normalize_range_by:
-            r = r / normalize_range_by
-        # Filter out points beyond the max range of axis
-        assert not ax.have_units(), 'spc.polarkdeplot(): found axes units. Assumed yaxis has no attached units, but is km'
-        theta = (heading - zero_azimuth + 360*units.deg ) % (360*units.deg)
-        # Feed magnitudes, not quantities. Quantities are clever but axes.scatter uses their units as axes labels. Not good for polar plot.
-        # Also, if I use quantities, the 2nd cfill plot errors out deep in matplotlib:     Nx = X.shape[-1] AttributeError: 'list' object has no attribute 'shape'
-        storm_rpts_plot = sns.kdeplot(x=np.radians(theta).m, y=r.m, ax=ax, alpha = alpha, color=kwdict[event_type]["c"])
-        storm_rpts_plot.axes.set_xlabel('') # in case you figure out how to pass quantities to ax.scatter()
-        storm_rpts_plot.axes.set_ylabel('')
+        # convert to Cartesian and apply Gaussian kde
+        rptx = xrpts["range"] * np.cos(np.radians(xrpts["heading"]))
+        rpty = xrpts["range"] * np.sin(np.radians(xrpts["heading"]))
+        n = len(xrpts)
+        X, Y = np.mgrid[-rmax:rmax+ds:ds, -rmax:rmax+ds:ds] 
+        bearing = pd.DataFrame(np.degrees(np.arctan2(Y,X))) # Make DataFrame because histogram2d_weighted expects a .values attribute
+        bearing[bearing < 0] = bearing[bearing < 0] + 360 # azbins is 0-360 but bearing was -180 to +180
+        dist_from_center = pd.DataFrame(np.sqrt(X**2 + Y**2))
+        positions = np.vstack([X.ravel(), Y.ravel()])
+        if event_type == "torn":
+            logging.info("weight torn rpts by F-sum (EF magnitude plus one)")
+            weights = xrpts["mag"].fillna(value=0) + 1 # F-sum McCaul 1991
+            event_type = "F-sum"
+        weights = None
+        kernel = gaussian_kde(np.vstack([rptx,rpty]), weights=weights)
+        Z = np.reshape(kernel(positions).T, X.shape)
+        Z = xarray.DataArray(n * Z  / units.km**2 / (2*spc_td.total_seconds() * units.seconds)) # histogram2d_weighted expects a DataArray with units.
+        Z = Z.metpy.convert_units("1/km**2/day")
+        # convert Cartesian grid Z to polar coordinates
+        pkde = histogram2d_weighted(bearing, dist_from_center, azbins, rbins, Z)
+        pkde["azimuth"] = np.radians(pkde.azimuth) # Polar Axes are in radians not degrees.
+        colors = symbol_dict()[event_type]["c"]
+        polarc = pkde.plot.contour(x="azimuth",y="range", ax=ax, colors=colors, linewidths=0.5, levels=kdelevels[event_type],
+                add_colorbar=add_colorbar, cbar_kwargs={"shrink":0.5,"pad":0.09} if add_colorbar else None)
 
-        storm_rpts_plots[event_type] = storm_rpts_plot
-    return storm_rpts_plots
+        cb = None
+        if add_colorbar:
+            cb = polarc.colorbar
+            cb.formatter.set_powerlimits((-2,2))
+            cb.update_ticks()
+            cb.ax.yaxis.offsetText.set(size='xx-small')
+            cb.ax.yaxis.offsetText.set_horizontalalignment("left")
+            cb.set_label(event_type + " " + cb.ax.yaxis.get_label().get_text(),fontsize="xx-small")
+            cb.ax.tick_params(labelsize='xx-small')
+            
+        ax.set_xlabel('')
+        ax.set_ylabel('')
+        storm_rpts_kde[event_type] = pkde # thought about QuadContourSet polarc, but you can't back out data from it.
+    return storm_rpts_kde
 
 
-def polarplot(originlon, originlat, storm_reports, ax, zero_azimuth=0*units.deg, normalize_range_by=None, scale=1, alpha=0.8, debug=False):
-    # Return dictionary where key/value pairs are
-    # event_type : scatterplot
+def polarplot(originlon, originlat, storm_reports, ax, zero_azimuth=0*units.deg, add_legend=False, normalize_range_by=None, scale=1, alpha=0.8,
+        legend_title=None):
+    # Return storm_reports DataFrame with additional "range" and "heading" columns
 
+    storm_reports["range"] = None
+    storm_reports["heading"] = None
     if storm_reports.empty:
-        logging.debug("spc.polarplot(): storm reports DataFrame is empty. Returning None")
-        return None
+        logging.debug("spc.polarplot(): storm reports DataFrame is empty.")
+        return storm_reports
 
 
     # Color, size, marker, and label of wind, hail, and tornado storm reports
     kwdict = symbol_dict(scale=scale)
-    storm_rpts_plots = {}
 
     geo = cartopy.geodesic.Geodesic()
+    # Use .m because geo.inverse does not work with quantities.
+    n3 = geo.inverse((originlon.m, originlat.m), np.column_stack((storm_reports["slon"], storm_reports["slat"])))
+    n3 = np.asarray(n3) # convert cartopy MemoryView to ndarray
+    storm_reports["range"] = n3[:,0]/1000. # geo.inverse returns meters; convert to km
+    if normalize_range_by:
+        storm_reports["range"] /= normalize_range_by
+    storm_reports["heading"] = n3[:,1]  # in deg
+    storm_reports["heading"] = (storm_reports["heading"] - zero_azimuth.m + 720) % 360 # if zero_azimuth has units, it assumes radians for numbers without units.
 
+    # Filter out points beyond the max range of axis
+    assert not ax.have_units(), 'spc.polarplot() found axes units. Assumed yaxis has no attached units, but is km'
+    rmax = ax.get_ylim()[1] * units.km
+    inrange = storm_reports["range"].values * units.km  < rmax # have to use .values because units won't stick to pandas Series.
+    storm_reports = storm_reports[inrange]
+    logging.debug(f"spc.polarplot(): found {inrange.sum()} reports inside axis range")
+
+    ax.set_autoscale_on(False) # Don't rescale the axes with far-away reports (thought unneeded after filtering out pts beyond rmax, but symbol near maximum range autoscales axis to larger range.)
     for event_type, xrpts in storm_reports.groupby("event_type"):
-        kwdict[event_type]["edgecolors"]="black"
-        kwdict[event_type]["linewidths"] = 0.25
         logging.debug(f"spc.polarplot(): found {len(xrpts)} {event_type} reports")
-        lons, lats = xrpts.slon.values*units.degrees_E, xrpts.slat.values*units.degrees_N
-        r, heading = atcf.dist_bearing(originlon, originlat, lons, lats)
-        # Use .m because geo.inverse does not work with quantities.
-        n3 = geo.inverse((originlon.m, originlat.m), np.column_stack((lons.m, lats.m)))
-        n3 = np.asarray(n3) # convert cartopy MemoryView to ndarray
-        r_geo = n3[:,0] * units.m 
-        start_heading = n3[:,1] * units.deg
-        start_heading[start_heading < 0] += (360*units.deg) # important to have units.deg on 360 or else it assumes 360 radians. 
-        if (np.abs(r - r_geo).max() > 5*units.km):
-            logging.debug(f"spc.polarplot(): range={r} range_geo={r_geo}")
-            if (np.abs(r - r_geo).max() > 10*units.km):
-                pdb.set_trace()
-        if (np.abs(heading - start_heading).max() > 2*units.deg):
-            print("spc.polarplot(): headings", heading, start_heading)
-            assert np.abs(heading - start_heading).max() <= 5*units.deg, "spc.polarplot(): heading-start_heading > 5deg"
-        if normalize_range_by:
-            r = r / normalize_range_by
-        # Filter out points beyond the max range of axis
-        assert not ax.have_units(), 'spc.polarplot() found axes units. Assumed yaxis has no attached units, but is km'
-        maxr = ax.get_ylim()[1] * units.km
-        if all(r >= maxr):
-            logging.debug(f"spc.polarplot(): {event_type} reports all outside axis range {maxr}.")
-            continue
-        inrange = r < maxr
-        r = r[inrange]
-        heading = heading[inrange]
-        logging.debug(f"spc.polarplot(): found {inrange.sum()} {event_type} reports inside axis range")
-        kwdict[event_type]["label"] += " (%d)" % inrange.sum()
-        theta = (heading - zero_azimuth + 360*units.deg ) % (360*units.deg)
-        ax.set_autoscale_on(False) # Don't rescale the axes with far-away reports (thought unneeded after filtering out pts beyond maxr, but symbol near maximum range autoscales axis to larger range.)
+        kwdict[event_type]["label"] += f" ({len(xrpts)})"
         # Feed axes.scatter magnitudes, not quantities. Quantities are clever but axes.scatter uses their units as axes labels. Not good for polar plot.
         # Also, if I use quantities, the 2nd cfill plot errors out deep in matplotlib:     Nx = X.shape[-1] AttributeError: 'list' object has no attribute 'shape'
-        storm_rpts_plot = ax.scatter(np.radians(theta).m, r.m, alpha = alpha, **kwdict[event_type])
-        storm_rpts_plot.axes.set_xlabel('') # in case you figure out how to pass quantities to ax.scatter()
-        storm_rpts_plot.axes.set_ylabel('')
+        storm_rpts_plot = ax.scatter(np.radians(xrpts["heading"]), xrpts["range"], alpha = alpha, **kwdict[event_type])
 
-        az, r = centroid_polar(theta, r)
+        az, r = centroid_polar(xrpts["heading"].values*units.deg, xrpts["range"].values*units.km)
 
-        storm_rpts_plots[event_type] = storm_rpts_plot
-    return storm_rpts_plots
+    ax.set_xlabel('') # in case you figure out how to pass quantities to ax.scatter()
+    ax.set_ylabel('')
 
-def plot(storm_reports, ax, scale=1, drawrange=0, alpha=0.5, colorbyfreq=False, debug=False):
+    if add_legend:
+        storm_rpt_legend_kw = dict(fontsize=4.8, bbox_to_anchor=(0.8, -0.01), loc='upper left', borderaxespad=0, frameon=False, title_fontsize='xx-small')
+        storm_report_legend = ax.legend(title=legend_title, **storm_rpt_legend_kw)
+
+    return storm_reports
+
+def plot(storm_reports, ax, scale=1, drawrange=0, alpha=0.5, colorbyfreq=False):
 
     storm_rpts_plots = {}
     if storm_reports.empty:
@@ -544,7 +636,7 @@ def plot(storm_reports, ax, scale=1, drawrange=0, alpha=0.5, colorbyfreq=False, 
                 if c>1:
                     ax.text(lon, lat, c, transform=cartopy.crs.PlateCarree(), fontsize=6, va="center", ha="center", zorder=storm_rpts_plot.get_zorder()+1) 
         else:
-            storm_rpts_plot = ax.scatter(lons, lats, alpha = alpha, edgecolors="None", **kwdict[event_type],
+            storm_rpts_plot = ax.scatter(lons, lats, alpha = alpha, **kwdict[event_type],
                     transform=cartopy.crs.PlateCarree()) # ValueError: Invalid transform: Spherical scatter is not supported with crs.Geodetic
         storm_rpts_plots[event_type] = storm_rpts_plot
         if drawrange > 0:
@@ -565,7 +657,7 @@ def plot(storm_reports, ax, scale=1, drawrange=0, alpha=0.5, colorbyfreq=False, 
 
 
 
-def to_MET(df, gribcode=None, debug=False):
+def to_MET(df, gribcode=None):
     # INPUT:
     #   df       - storm_reports DataFrame from spc.get_storm_reports()
     #   gribcode - Use gribcode if specified.
@@ -623,7 +715,7 @@ def listFD(url, ext=''):
 # Perhaps the lat and lon are in the "location" files (as opposed to "details").
 # Recommend using spc.get_storm_reports() instead.
 
-def stormEvents(year, info="details", version="1.0", debug = False):
+def stormEvents(year, info="details", version="1.0"):
     # INPUT
     #   year   - 4-digit year
     # OUTPUT
