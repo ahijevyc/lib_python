@@ -1,6 +1,7 @@
 import cartopy
 from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
 import csv
+import logging
 import math # for math.e
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
@@ -1148,64 +1149,57 @@ def get_ext_of_wind(wind_speed, distance, bearing, raw_vmax, windcode='NEQ', win
         
     return wind_radii
 
-def get_normalize_range_by(df, index, normalize_by, debug=False):
-    #print(df.loc[index,:])
-    # Grab the value to normalize by from df DataFrame row, index.
+def get_normalize_range_by(track, normalize_by):
+    logging.debug(track)
     if normalize_by == 'r34':
-        rad = df.loc[index, 'rad']
-        if rad == '34':
-            wind_radii = df.loc[index, ['rad1','rad2','rad3','rad4']]
-            value = wind_radii.max()
-            print(wind_radii)
+        if track["rad"] == '34':
+            value = track[['rad1','rad2','rad3','rad4']].max()
+            logging.info(value)
             if np.isnan(value):
                 value = 50.
-                print("get_normalize_range_by(): r34 is zero. Normalize by {:.0f} nautical miles".format(value))
+                logging.info(f"r34 is nan. Normalize by {value} nautical miles")
         else:
-            print("get_normalize_range_by(): Unexpected 'rad' value", rad)
+            logging.info(f'Unexpected track rad value {track["rad"]}')
             sys.exit(1)
     elif normalize_by == 'Vt500km':
-        valid_time = df.loc[index, "valid_time"]
         # Had targetdir set to "." but it grabbed and converted NARR grb in the current directory
-        data = narr.vectordata("wind10m", valid_time, targetdir=workdir, debug=debug)
+        data = narr.vectordata("wind10m", track["valid_time"], targetdir=workdir)
         lon, lat = data.metpy.longitude, data.metpy.latitude
         u, v = data
-        derived_vitals_dict = atcf.derived_winds(u, v, xarray.full_like(u, 1013.)*units('hPa'), lon, lat, df.loc[index, :], debug=debug)
+        derived_vitals_dict = atcf.derived_winds(u, v, xarray.full_like(u, 1013.)*units('hPa'), lon, lat, track)
         storm_size_S = derived_vitals_dict["storm_size_S"]
         if np.isnan(storm_size_S):
-            print("storm_size_S is nan. This may be for Isaac 2012, which has artificial lat/lon extension, but no vmax")
-            storm_size_S = df.loc[index, "storm_size_S"]
+            logging.info("storm_size_S is nan. This may be for Isaac 2012, which has artificial lat/lon extension, but no vmax")
+            storm_size_S = track["storm_size_S"]
         if storm_size_S < 0.25:
-            print("storm_size_S is too small",storm_size_S)
-            print("setting to 0.25")
+            logging.info(f"storm_size_S is too small {storm_size_S}. Setting to 0.25")
             storm_size_S = 0.25
-        print(f'normalizing range by Knaff_Zehr S. {df.loc[index, "lat"]:.2f}N Vmax {df.loc[index, "vmax"]:.2f}')
-        if debug:
-            print("Vmax from NARR (not used)", derived_vitals_dict["raw_vmax"])
-        print(f'Vt_500km={derived_vitals_dict["Vt_500km"]:.2f}  S={storm_size_S:.2f}')
+        logging.info(f'normalizing range by Knaff_Zehr S. {track["lat"]:.2f}N Vmax {track["vmax"]:.2f}')
+        logging.debug(f'Vmax from NARR (not used) {derived_vitals_dict["raw_vmax"]}')
+        logging.info(f'Vt_500km={derived_vitals_dict["Vt_500km"]:.2f}  S={storm_size_S:.2f}')
         # Originally took inverse of storm_size_S, but that is wrong. If you have a storm 10% larger than normal, 
         # you want to pull everything 10% closer to the origin, so it matches up with other storms that are normal sized.
         # The radial distance is divided by this value.
-        assert storm_size_S != 0, "can't be zero"+str(df.loc[index,:])
+        assert storm_size_S != 0, "storm_size_S can't be zero {track}"
         if np.isnan(storm_size_S):
-            print ("value to normalize range by can't be nan")
+            logging.info("value to normalize range by can't be nan")
             pdb.set_trace()
         return storm_size_S
     else:
-        value = df.loc[index, normalize_by]
+        value = track[normalize_by]
         if np.isnan(value):
             if normalize_by == 'rmw':
                 value = 25. # 25 nautical miles is default rmw in aswip.
             else:
-                print("get_normalize_range_by(): Null value for", normalize_by)
-                print("not sure how to define")
+                logging.error(f"get_normalize_range_by(): Null value for {normalize_by}. Not sure how to define")
                 sys.exit(1)
 
 
     value = value * units["nautical_mile"].to("km")
 
 
-    assert value != 0, "can't be zero"+str(df.loc[index,:])
-    assert not np.isnan(value), "can't be nan"+str(df.loc[index,:])
+    assert value != 0, "value can't be zero {track}"
+    assert not np.isnan(value), "value can't be nan {track}"
 
     return value
 
@@ -1312,7 +1306,7 @@ def derived_winds(u10, v10, mslp, lonCell, latCell, row, vmax_search_radius=250.
     Vt_500km = Vt_azimuthal_mean.sel(radius = 500*units.km).data
 
     if Vt_500km < 0:
-        print(" atcf.derived_winds(): mean tangential wind 400-600km out is negative! TODO: figure out how to define storm_size_S.") 
+        logging.info(" atcf.derived_winds(): mean tangential wind 400-600km out is negative! TODO: figure out how to define storm_size_S.") 
     storm_size_S = Vt_500km / V500c(row.vmax*units["knots"], row.lat*units["degree_N"]) # Should I use the input row.vmax or the raw_vmax from the raw model?
     # I originally put raw_vmax, but I changed to row.vmax. It depends which one you think is more accurate. 
     # For NARR at least, I think the input row.vmax is more accurate because NARR is coarse and biased low.
