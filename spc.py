@@ -66,7 +66,7 @@ def RyanSobash(start=None, end=None, event_type="torn"):
     # make it aware of its UTC timezone.
     sql_df["datetime"] = sql_df["datetime"].dt.tz_localize(pytz.UTC)
     sql_df = sql_df[(sql_df.datetime >= start) & (sql_df.datetime < end)]
-    sql_df = sql_df.sort_values(by=["datetime","slon","slat"]).set_index("datetime") # did this with SPC too ("time" instead of "datetime")
+    sql_df = sql_df.sort_values(by=["datetime","slon","slat"])# did this with SPC too ("time" instead of "datetime")
 
     sql_df["dbfile"] = sobash_db
     logging.debug(f"From Ryan's SQL database {sobash_db}")
@@ -280,7 +280,7 @@ def get_storm_reports( start = datetime.datetime(2016,6,10,tzinfo=pytz.UTC), end
         time_window = (rpts.time >= start) & (rpts.time <= end)
         rpts = rpts[time_window]
 
-        rpts = rpts.sort_values(by=["time","slon","slat"]).set_index("time")
+        rpts = rpts.sort_values(by=["time","slon","slat"])
         logging.debug(f"found {len(rpts)} {event_type} reports")
 
 
@@ -299,7 +299,7 @@ def get_storm_reports( start = datetime.datetime(2016,6,10,tzinfo=pytz.UTC), end
                     logging.warning("Ryan's database modified more recently but it may have duplicate reports.")
                 logging.info(f"Mod date of SPC reports file:    {datetime.datetime.fromtimestamp(epoch1).strftime('%c')}")
                 logging.info(f"Mod date of Ryan's SQL database: {datetime.datetime.fromtimestamp(epoch2).strftime('%c')}")
-            elif not sql_df.index.equals(rpts.index): # Times don't all match
+            elif not sql_df["datetime"].equals(rpts["time"]): # Times don't all match
                 logging.info("Ryan's database has same # of reports but times aren't equal. Can't easily compare the lat and lons")
                 print(f"SPC\n{rpts}")
                 print(f"Ryan's\n{sql_df}")
