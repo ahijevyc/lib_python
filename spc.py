@@ -119,9 +119,9 @@ def get_storm_reports( start = datetime.datetime(2016,6,10,tzinfo=pytz.UTC), end
     #   rpts - DataFrame with time, location, and description of event (LSR)
 
 
-    logging.info(f"get_storm_reports: start:{start}")
-    logging.info(f"get_storm_reports: end:{end}")
-    logging.info(f"get_storm_reports: event types:{event_types}")
+    logging.debug(f"get_storm_reports: start:{start}")
+    logging.debug(f"get_storm_reports: end:{end}")
+    logging.debug(f"get_storm_reports: event types:{event_types}")
 
 
     # Create one DataFrame with all requested LSR event types.
@@ -299,14 +299,15 @@ def get_storm_reports( start = datetime.datetime(2016,6,10,tzinfo=pytz.UTC), end
                     logging.warning("Ryan's database modified more recently but it may have duplicate reports.")
                 logging.info(f"Mod date of SPC reports file:    {datetime.datetime.fromtimestamp(epoch1).strftime('%c')}")
                 logging.info(f"Mod date of Ryan's SQL database: {datetime.datetime.fromtimestamp(epoch2).strftime('%c')}")
-            elif not sql_df["datetime"].equals(rpts["time"]): # Times don't all match
+            elif not all(sql_df["datetime"].to_numpy() == rpts["time"].to_numpy()): # Times don't all match. ignore index
                 logging.info("Ryan's database has same # of reports but times aren't equal. Can't easily compare the lat and lons")
                 print(f"SPC\n{rpts}")
                 print(f"Ryan's\n{sql_df}")
             else:
                 # See if they have the same locations
                 same_columns = ["slat", "slon", "elat", "elon"]
-                mismatch = (sql_df[same_columns] != rpts[same_columns]).any(axis="columns")
+                # ignore index (which has no real meaning and differs between datasets)
+                mismatch = (sql_df.reset_index()[same_columns] != rpts.reset_index()[same_columns]).any(axis="columns")
                 if mismatch.any(): # any rows and any columns
                     logging.warning("SPC locations don't match Ryan's SQL database")
                     mine = rpts.loc[mismatch,same_columns]
@@ -341,7 +342,7 @@ def symbol_dict(scale=1):
          }
     for k in d:
         d[k]["edgecolors"]="black"
-        d[k]["linewidths"] = 0.1
+        d[k]["linewidths"] = 0.001
     d["F-sum"] = d["torn"].copy()
     return d
 
@@ -528,7 +529,7 @@ def polarkde(originlon, originlat, storm_reports, ax, azbins, rbins, spc_td, ds=
         dist_from_center = pd.DataFrame(np.sqrt(X**2 + Y**2))
         positions = np.vstack([X.ravel(), Y.ravel()])
         if event_type == "torn":
-            logging.info("weight torn rpts by F-sum (EF magnitude plus one)")
+            logging.debug("weighting torn rpts by F-sum (EF magnitude plus one)")
             weights = xrpts["mag"].fillna(value=0) + 1 # F-sum McCaul 1991
             event_type = "F-sum"
         weights = None
