@@ -16,7 +16,6 @@ from   scipy import spatial
 import scipy.ndimage as ndimage
 from scipy.stats import circmean # To average longitudes
 from scipy.stats import gaussian_kde
-import seaborn as sns
 import sqlite3
 import sys # for stderr output
 import xarray
@@ -326,7 +325,7 @@ def get_storm_reports( start = datetime.datetime(2016,6,10,tzinfo=pytz.UTC), end
                         pdb.set_trace()
                         sys.exit(1)
 
-        all_rpts = all_rpts.append(rpts) # Append this storm report type
+        all_rpts = pd.concat([all_rpts,rpts], axis="index") # Append this storm report type
 
     return all_rpts
 
@@ -632,7 +631,7 @@ def plot(storm_reports, ax, scale=1, drawrange=0, alpha=0.5, colorbyfreq=False):
             del(kwdict[event_type]["s"])
             lons = [x[0] for x in freq.index]
             lats = [x[1] for x in freq.index]
-            storm_rpts_plot = ax.scatter(lons, lats, c=freq.values, edgecolors="None", **kwdict[event_type], transform=cartopy.crs.PlateCarree()) 
+            storm_rpts_plot = ax.scatter(lons, lats, c=freq.values, **kwdict[event_type], transform=cartopy.crs.PlateCarree()) 
             for (lon, lat), c in freq.iteritems():
                 if c>1:
                     ax.text(lon, lat, c, transform=cartopy.crs.PlateCarree(), fontsize=6, va="center", ha="center", zorder=storm_rpts_plot.get_zorder()+1) 
