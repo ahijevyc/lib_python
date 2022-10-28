@@ -70,8 +70,9 @@ def origmesh(df, initfile, diagdir, wind_radii_method="max", debug=False):
 
     # Only groupby 'fhr'. This should already be a single unique track.
     df = df.groupby('fhr').apply(raw_vitals,diagdir,lonCell,latCell,wind_radii_method=wind_radii_method,debug=debug)
-    # don't return with fhr as index
-    df = df.droplevel('fhr')
+    if "fhr" in df.index.names: # Don't know why it sometimes is not an index
+        # don't return with fhr as index
+        df = df.droplevel('fhr')
     return df, initfile
 
 

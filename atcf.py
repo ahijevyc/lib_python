@@ -16,7 +16,7 @@ import pandas as pd
 import pdb
 import re
 from scipy.stats import circmean # for averaging longitudes
-from stormevents.nhc import nhc_storms, VortexTrack
+#from stormevents.nhc import nhc_storms, VortexTrack
 import xarray
 
 basin_bounds = {
@@ -1044,14 +1044,15 @@ def get_azimuthal_mean(x, distance, binsize = 25.*units.km):
     n, bin_edges = np.histogram(distance, bins=bins)
     assert (bin_edges == bins).all()
     if (n == 0).any():
-        print("get_azimuthal_mean: no pts b/t", bins[n == 0], "and", bins[n == 0] + binsize)
+        logging.error(f"get_azimuthal_mean: no pts b/t {bins[n == 0]} and {bins[n == 0] + binsize}")
         sys.exit(1)
     if (n == 1).any():
-        print("get_azimuthal_mean: only 1 pt b/t", bins[n == 1], "and", bins[n == 1] + binsize)
-    h, _ = np.histogram(distance, bins=bins, weights=x) * x.metpy.units
+        logging.info(f"get_azimuthal_mean: only 1 pt b/t {bins[n == 1]} and {bins[n == 1] + binsize}")
+    h, _ = np.histogram(distance, bins=bins, weights=x) # Depreciation warning about ragged arrays if you add units here 
     x_vs_radius = h/n
     bin_centers = bins[:-1] * binsize.units + binsize/2
     bin_centers *= binsize.units
+    x_vs_radius *= x.metpy.units
     da = xarray.DataArray(data=x_vs_radius, coords={"radius":bin_centers})
     return da
 
