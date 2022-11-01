@@ -29,7 +29,7 @@ basin_bounds = {
         "cp": (150,-135+360,0,34),
         "io": (30,109,0,28),
         "wp": (99,180,0,38),
-        "global": (-180,180,-20,70),
+        "global": (-179.999,180,-20,70), # changed -180 to 179.999 to avoid UserWarning: Attempting to set identical left == right == 179.99999999999932 results in singular transformations
         "track" : None # plot domain is simply the storm track
         }
 
@@ -638,15 +638,18 @@ def plot_track(ax, start_label,group,end_label, scale=1, debug=False, label_inte
     if lformat and not already_annotated:
         ax.annotate(text="day of month at hour 0", xy=(3,3), xycoords='axes pixels', fontsize=6, label=label)
 
-def TClegend(fig, left=94, up=32):
+def TClegend(ax):
     # legend was screen-grabbed from tropicalatlantic.com
-    #legend = plt.imread('/glade/work/ahijevyc/share/tropicalatlantic.legend.png')
-    legend = plt.imread('/glade/work/ahijevyc/share/TClegend.png')
-    # overlay left pixels in and up pixels up from bottom left corner
-    l = fig.figimage(legend, left, up)
-    # Bring legend to front
-    l.set_zorder(3)
-    return l
+    img = plt.imread('/glade/work/ahijevyc/share/TClegend.png')
+    xmin, dx = 0, 1
+    ymin = ax.get_position().ymin/2
+    hgt, wid, _ = img.shape
+    dy = dx*hgt/wid
+    legax = ax.figure.add_axes([xmin, ymin, dx, dy])
+    legax.yaxis.set_visible(False)
+    legax.xaxis.set_visible(False)
+    legax.imshow(img)
+    return legax
 
 def interpolate_by_rad(rad, interval, debug=False):
     # Interpolate in time 
