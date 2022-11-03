@@ -1,13 +1,14 @@
-import matplotlib
-matplotlib.use("Agg") # Tried tkAgg for access to plt.show() interactivity but didn't work as user mpasrt with bad x11 connection
-import matplotlib.pyplot as plt
 import argparse
 import atcf
 from datetime import datetime, timedelta
-import pandas as pd
-import pdb
+import logging
+import matplotlib
+matplotlib.use("Agg") # Tried tkAgg for access to plt.show() interactivity but didn't work as user mpasrt with bad x11 connection
+import matplotlib.pyplot as plt
 import numpy as np
 import os
+import pandas as pd
+import pdb
 import re
 import requests
 import sys
@@ -15,11 +16,10 @@ import sys
 idir = '/glade/work/ahijevyc/share/ibtracs/'
 
 
-def get_atcfname_from_stormname_year(stormname, year, version="04r00_20200308", debug=False):
+def get_atcfname_from_stormname_year(stormname, year, version="04r00_20200308"):
     justname = stormname.upper()
     ifile = idir + "IBTrACS_SerialNumber_NameMapping_v"+version+".txt"
-    if debug:
-        print("ibtracs.get_atcfname_from_stormname_year(): searching for",stormname,year,"in",ifile)
+    logging.debug(f"ibtracs.get_atcfname_from_stormname_year(): searching for {stormname} {year} in {ifile}")
     atcfname=None
     for line in open(ifile, "r"):
         if line[0:4] == year and re.search(justname, line):
@@ -27,10 +27,10 @@ def get_atcfname_from_stormname_year(stormname, year, version="04r00_20200308", 
             atcfname = m.group(1)
             return atcfname
     if not atcfname:
-        print("ibtracs.get_atcfname_from_stormame_year(): no",stormname,year,"in",ifile)
+        logging.error(f"ibtracs.get_atcfname_from_stormame_year(): no {stormname} {year} in {ifile}")
         sys.exit(1)
 
-def ibtracs_to_atcf(df, debug=False):
+def ibtracs_to_atcf(df):
 
     column_match = {
             "BASIN"         : "basin",
@@ -64,6 +64,7 @@ def ibtracs_to_atcf(df, debug=False):
 
     df["valid_time"] = pd.to_datetime(df["valid_time"])
     df["initial_time"] = df["valid_time"]
+    df["cy"] = df["cy"].astype(str) # cy is not always an integer (e.g. 10E)
     df["technum"] = np.nan
     df["model"] = 'BEST'
     df["fhr"] = 0
@@ -104,7 +105,7 @@ def ibtracs_to_atcf(df, debug=False):
 
 
 
-def get_atcf(stormname, year, version="04r00", basin="", debug=False):
+def get_atcf(stormname, year, version="04r00", basin=""):
 
     # Get "ALL" file by default. 
     # Specify basin keyword to read a smaller, more specialized file.
@@ -148,23 +149,19 @@ def get_atcf(stormname, year, version="04r00", basin="", debug=False):
         region = "WP"
     else:
         region = "ALL"
-    ifile = idir+'ibtracs.'+region+'.list.v'+version+'.csv'
+    ifile = os.path.join(idir,f'ibtracs.{region}.list.v{version}.csv')
     if not os.path.exists(ifile):
         url  = "https://www.ncei.noaa.gov/data/"
         url += "international-best-track-archive-for-climate-stewardship-ibtracs/"
         url += "v"+version+"/access/csv/ibtracs."+region+".list.v"+version+".csv"
-        if debug:
-            print(ifile,"not found. Downloading from", url)
+        logging.debug(f"{ifile} not found. Downloading from {url}")
         myfile = requests.get(url)
         open(ifile, "wb").write(myfile.content)
     # keep_default_na=False . we don't want "NA" or North Atlantic to be treated as NA/NaN.
     # If skipinitialspace=True, add empty string to list of na_values. or you get TypeError. can't convert string to float64.
-    if debug:
-        print("read", ifile)
-    df = pd.read_csv(ifile, delimiter=',', skipinitialspace=True, header=[0,1], na_values=na_values, keep_default_na=False, dtype=dtype)
-    if debug:
-        print("ibtracs.get_atcf(): read",len(df),"lines from",ifile)
-        pdb.set_trace()
+    logging.debug(f"read {ifile}")
+    df = pd.read_csv(ifile, delimiter=',', skipinitialspace=True, header=[0,1], na_values=na_values, keep_default_na=False, low_memory=False, dtype=dtype)
+    logging.debug(f"ibtracs.get_atcf(): read {len(df)} lines from {ifile}")
     column_units = {}
     for column, unit in df.columns:
         if unit[0:8] == 'Unnamed:':
@@ -189,11 +186,10 @@ def get_atcf(stormname, year, version="04r00", basin="", debug=False):
     assert (df["LON"]-df["USA_LON"]).abs().max() < 0.2, "wmo and usa longitudes differ a lot"
 
     df = ibtracs_to_atcf(df)
-    if debug:
-        print("ibtracs.get_atcf(): returning",len(df),"lines for",stormname,year)
+    logging.debug(f"ibtracs.get_atcf(): returning {len(df)} lines for {stormname} {year}")
     return df, ifile
 
-def get_stormname_from_atcfname(atcf_filename, version="04r00_20200308", debug=False):
+def get_stormname_from_atcfname(atcf_filename, version="04r00_20200308"):
     bname = os.path.basename(atcf_filename)
     if bname.startswith("a"): # allow for adeck, but change name to start with "b" so the string may be found in IBTrACS file.
         bname = "b" + bname[1:]
@@ -203,32 +199,30 @@ def get_stormname_from_atcfname(atcf_filename, version="04r00_20200308", debug=F
     bname = bname+"\[atcf\]"
     ifile = idir + "IBTrACS_SerialNumber_NameMapping_v"+version+".txt"
     stormname = None
-    if debug:
-        print("ibtracs.get_stormname_from_atcfname(): searching for",bname,"in",ifile)
+    logging.debug(f"ibtracs.get_stormname_from_atcfname(): searching for {bname} in {ifile}")
     for line in open(ifile, "r"):
         if re.search(bname, line):
             m = re.search(r" ([A-Z_]+)\[", line)
             stormname = m.group(1)
             year = line[0:4]
-            if debug:
-                print(year, bname)
+            logging.debug(f"{year} {bname}")
             assert year == bname[5:9]
             return stormname + " " + year
     if not stormname:
-        print("ibtracs.get_stormname_from_atcfname(): no",bname,"in",ifile)
+        logging.error(f"ibtracs.get_stormname_from_atcfname(): no {bname} in {ifile}")
         sys.exit(1)
 
 def extension(stormname, season):
-    from metpy import units # this is so slow. Only used here.
+    from metpy.units import units # this is so slow. Only used here.
     # capitalize stormnames in extension dictionary
     inkey = (stormname.upper(), int(season))
     # TODO: Grab last time, lat, lon from ibtracs, not hard coded values.
     # Need last entry from ibtracs to get speed and heading for all new members. speed_heading() needs position before.
     x = {("ISAAC",2012): # first element is last position from ibtracs, then tracked manually in 700mb wind in NARR
-            {"valid_time": [datetime(2012,9,1,6), datetime(2012,9,1,12), datetime(2012,9,1,15), datetime(2012,9,1,18), datetime(2012,9,1,21),
-                                                  datetime(2012,9,2, 0), datetime(2012,9,2, 3), datetime(2012,9,2, 6), datetime(2012,9,2, 9)],
-             "lat"     : [ 38.4,  38.5,  38.7,  38.7,  38.6,  39.1,  38.7,  38.5,  38.9] * units.units.degree_N,
-             "lon"     : [-93.3, -93.6, -93.1, -93.0, -92.0, -91.7, -90.9, -90.6, -89.7] * units.units.degree_E,
+            {"valid_time": [pd.to_datetime(x) for x in ["20120901T06", "20120901T12", "20120901T15", "20120901T18", "20120901T21",
+                                                  "20120902T00", "20120902T03", "20120902T06", "20120902T09"]],
+             "lat"     : [ 38.4,  38.5,  38.7,  38.7,  38.6,  39.1,  38.7,  38.5,  38.9] * units.degree_N,
+             "lon"     : [-93.3, -93.6, -93.1, -93.0, -92.0, -91.7, -90.9, -90.6, -89.7] * units.degree_E,
              "storm_size_S" : 1.0, # Does this make sense as a fill-in value? for Vt500km, it does
             }
         }
@@ -256,26 +250,25 @@ def main():
     parser.add_argument("-d", "--debug", action="store_true", help="debug mode")
     parser.add_argument("-o", "--outdir", default=".", help="Output path")
     args = parser.parse_args()
-    debug = args.debug
     stormname = args.stormname.upper()
     season = args.season
     png = os.path.realpath(os.path.join(args.outdir, stormname+season+".png"))
     dat = os.path.realpath(os.path.join(args.outdir, stormname+season+".dat"))
     if (os.path.exists(png)):
-        print("found",png," Exiting")
+        logging.warning(f"found {png} Exiting")
         sys.exit(1)
     if (os.path.exists(dat)):
-        print("found",dat," Exiting")
+        logging.warning(f"found {dat} Exiting")
         sys.exit(1)
     ax = atcf.get_ax()
-    track_df, ifile = get_atcf(stormname, season, basin=args.basin, debug=debug)
+    track_df, ifile = get_atcf(stormname, season, basin=args.basin)
     atcf.write(dat, track_df)
-    print("created ",dat)
+    logging.info(f"created {dat}")
     start_label=""
     end_label=""
     atcf.plot_track(ax, start_label, track_df, end_label, label_interval_hours=12)
     plt.savefig(png)
-    print("created ",png)
+    logging.warning(f"created {png}")
 
 if __name__ == "__main__":
     main()
