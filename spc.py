@@ -53,7 +53,8 @@ def getTCTOR(rename=True):
 
 
 def RyanSobash(start=None, end=None, event_type="torn"):
-    sobash_db = "/glade/u/home/sobash/2013RT/REPORTS/reports_v20200626.db"
+    #sobash_db = "/glade/u/home/sobash/2013RT/REPORTS/reports_v20200626.db"
+    sobash_db = "/glade/u/home/sobash/2013RT/REPORTS/reports_v20221101.db"
     conn = sqlite3.connect(sobash_db)
     sqltable = "reports_" + event_type
     # Could apply a datetime range here (WHERE datetime BETWEEN yyyy/mm/dd hh:mm:ss and blah), but converting from UTC to CST is tricky.
