@@ -994,7 +994,7 @@ def lon2s(lon):
 # Returns 2 things:
 #   1) distance (pint quantity with units km)
 #   2) initial bearing from 1st pt (lon1, lat1) to an array of other points (lons, lats). (also pint quantity)
-def dist_bearing(lon1,lat1,lons,lats,Rearth=Rearth, debug=False):
+def dist_bearing(lon1,lat1,lons,lats,Rearth=Rearth):
     assert lat1 <=  90*deg, f"lat1 {lat1} >  90deg"
     assert lat1 >= -90*deg, f"lat1 {lat1} < -90deg"
     # TODO: allow scalar lons, lats

@@ -32,7 +32,7 @@ def get_atcfname_from_stormname_year(stormname, year, version="04r00_20200308"):
 
 def ibtracs_to_atcf(df):
 
-    column_match = {
+    columns = {
             "BASIN"         : "basin",
             "ISO_TIME"      : "valid_time",
             "NUMBER"        : "cy",
@@ -57,55 +57,41 @@ def ibtracs_to_atcf(df):
             "WMO_WIND"      : "vmax",
             }
 
-    df = df.rename(columns = column_match)
+    df = df.rename(columns = columns)
 
     # Fill in nan vmax from WMO_WIND with USA_WIND
     df["vmax"] = df["vmax"].fillna(df["USA_WIND"])
 
-    df["valid_time"] = pd.to_datetime(df["valid_time"])
+    df["valid_time"]   = pd.to_datetime(df["valid_time"])
     df["initial_time"] = df["valid_time"]
-    df["cy"] = df["cy"].astype(str) # cy is not always an integer (e.g. 10E)
-    df["technum"] = np.nan
-    df["model"] = 'BEST'
-    df["fhr"] = 0
-    df["windcode"] = "NEQ"
-    df["maxseas"] = np.nan
-    df["initials"] = ""
-    df["depth"] = "X"
-    df["seascode"] = "NEQ"
+    df["cy"]           = df["cy"].astype(str) # cy is not always an integer (e.g. 10E)
+    df["technum"]      = np.nan
+    df["model"]        = 'BEST'
+    df["fhr"]          = 0
+    df["windcode"]     = "NEQ"
+    df["maxseas"]      = np.nan
+    df["initials"]     = ""
+    df["depth"]        = "X"
+    df["seascode"]     = "NEQ"
 
-    #move 34,50,64-kt windrad columns into multiple rows
-    id_vars = [x for x in df.columns]
-    for r in ['34','50','64']:
-        id_vars.remove('USA_R'+r+'_NE')
-    # Turns USA_R34_NE, USA_R50_NE, and USA_R64_NE columns into mutiple rows
-    # with the column name put in the row.
-    # two more columns are added, "rad" and "rad1"
-    # The column names go under "rad"
-    # and the values of USA_R34_NE, USA_R50_NE, and USA_R64_NE go under "rad1".
-    df = df.melt(id_vars=id_vars, var_name="rad", value_name="rad1")
-    df = df.sort_values("valid_time") # or else they are scattered by .melt function
-    # change string values "USA_R34_NE", "USA_R50_NE", and "USA_R64_NE" to "34", "50", and "64".
-    df.rad = df.rad.str[5:7]
-    # make 3 new empty columns to hold SE, SW, and NW quadrants wind radii
-    df["rad2"] = np.nan
-    df["rad3"] = np.nan
-    df["rad4"] = np.nan
-    for r in ['34','50','64']:
-        irad = df.rad == r
-        df.loc[irad,"rad2"] = df[irad]["USA_R"+r+"_SE"]
-        df.loc[irad,"rad3"] = df[irad]["USA_R"+r+"_SW"]
-        df.loc[irad,"rad4"] = df[irad]["USA_R"+r+"_NW"]
-        df.drop(columns=["USA_R"+r+"_SE", "USA_R"+r+"_SW", "USA_R"+r+"_NW"])
+    logging.info("Melt 34,50,64-kt windrad columns into multiple rows")
+    # Rename USA_R34_NE -> rad1-34,
+    #        USA_R34_SE -> rad2-34,
+    #          ...
+    #        USA_R64_NW -> rad4-64
+    columns = {f"USA_R{rad}_{Q}":f"rad{q+1}-{rad}" for rad in [34,50,64] for q,Q in enumerate(["NE","SE","SW","NW"])}
+    df["id"] = df.index # Keep track of original index
+    df = pd.wide_to_long(df.rename(columns=columns), ["rad1","rad2","rad3","rad4"], i="id", j="rad", sep="-")
+    # Bring "rad" MultiIndex level back into columns.
+    df = df.reset_index()
 
-    #df.columns = map(str.lower, df.columns) # leads to duplicate lat and lon columns
     return df
         
 
 
 
 
-def get_atcf(stormname, year, version="04r00", basin=""):
+def get_df(version="04r00", basin=""):
 
     # Get "ALL" file by default. 
     # Specify basin keyword to read a smaller, more specialized file.
@@ -172,22 +158,20 @@ def get_atcf(stormname, year, version="04r00", basin=""):
             column_units[column] = 'hPa'
         else:
             column_units[column] = unit.lower()
-    df = df.droplevel(1, axis='columns')
 
-    #df = units.pandas_dataframe_to_unit_arrays(df, column_units=column_units) # creates a "unit-ed array" which is a dictionary. what use is that?
-    imatch = (df['NAME'].str.upper() == stormname.upper()) & (df['SEASON'].astype(str) == str(year))
-    if imatch.sum() == 0:
-        print(f"No {stormname.upper()} {year} in ibtracs {ifile}.")
-        pdb.set_trace()
-    df = df[imatch]
+    df = df.droplevel(1, axis='columns') # TODO: don't drop level_1 It is units.
 
     # sanity check - are the wmo and usa lat/lons similar?
-    assert (df["LAT"]-df["USA_LAT"]).abs().max() < 0.2, "wmo and usa latitudes differ a lot"
-    assert (df["LON"]-df["USA_LON"]).abs().max() < 0.2, "wmo and usa longitudes differ a lot"
+
+    assert (df["LAT"]-df["USA_LAT"]).abs().mean() < 0.1, "wmo and usa latitudes differ a lot"
+    assert (np.sin(np.radians(df["LON"]))-np.sin(np.radians(df["USA_LON"]))).abs().mean() < 0.01, "wmo and usa longitudes differ a lot"
+    assert (np.cos(np.radians(df["LON"]))-np.cos(np.radians(df["USA_LON"]))).abs().mean() < 0.01, "wmo and usa longitudes differ a lot"
 
     df = ibtracs_to_atcf(df)
-    logging.debug(f"ibtracs.get_atcf(): returning {len(df)} lines for {stormname} {year}")
     return df, ifile
+
+def this_storm(df, stormname, year):
+    return df.loc[(df['stormname'].str.upper() == stormname.upper()) & (df['SEASON'].astype(str) == str(year))]
 
 def get_stormname_from_atcfname(atcf_filename, version="04r00_20200308"):
     bname = os.path.basename(atcf_filename)
