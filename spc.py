@@ -326,7 +326,7 @@ def get_storm_reports( start = datetime.datetime(2016,6,10,tzinfo=pytz.UTC), end
                         pdb.set_trace()
                         sys.exit(1)
 
-        all_rpts = pd.concat([all_rpts,rpts], axis="index") # Append this storm report type
+        all_rpts = pd.concat([all_rpts,rpts], axis="index") # Append this storm report event_type
 
     return all_rpts
 

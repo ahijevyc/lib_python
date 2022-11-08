@@ -298,9 +298,9 @@ class Atcf(pd.DataFrame):
             f.close()
 
             if append:
-                print(f"appended {models} to {ofile}")
+                logging.info(f"appended {models} to {ofile}")
             else:
-                print(f"wrote {models} as {ofile}")
+                logging.info(f"wrote {models} as {ofile}")
 
 
 # Best tracks have different initial_times and fhr is always 0. 
@@ -393,13 +393,14 @@ def vmax_HollandB_to_minp(vmax_kts, HollandB, environmental_pressure_hPa = 1013,
 
 def iswarmcore(track, min_warmcore_percent=25):
     if 'warmcore' not in track.columns:
-        return True
+        logging.error("No warm core column.")
+        sys.exit(1)
     s = warmcore = track.warmcore.str.strip()
     warmcore = s == 'Y'
     known = s != 'U' # not unknown
     # If warmcore column exists, make sure at least one time is warmcore or unknown.
     if any(track.warmcore.str.strip() == 'U'):
-        print("warm core unknown")
+        logging.warning("warm core unknown")
         return True
     else:
         warmcore_percent = 100*warmcore.sum()/known.sum()
@@ -564,12 +565,11 @@ def mean_track(df):
             }
 
     # Optional columns. If they are not in df, you get KeyError in aggregate.
-    for ud in ["userdefine2", "userdata2", "userdefine3", "userdata3", "userdefine4", "userdata4"]:
-        if ud in df:
-            agg_dict[ud] = pd.Series.max
-    for ud in ["fhr"]: # made fhr optional - it may be part of index
-        if ud in df:
-            agg_dict[ud] = 'mean'
+    # Aggregate with pd.Series.max
+    agg_dict.update({x:pd.Series.max for x in df.columns if x.startswith("user")})
+    # made fhr optional - it may be part of index
+    if "fhr" in df:
+        agg_dict["fhr"] = 'mean'
 
     dfg = df.groupby(['basin','cy','initial_time','valid_time','windcode','rad','seascode'])
     df = dfg.agg(agg_dict)
@@ -593,13 +593,13 @@ def plot_track(ax, start_label,group,end_label, scale=1, debug=False, label_inte
             else:
                 row1 = group.iloc[i+1]
             ax.text(row.lon,row.lat, start_label, clip_box=ax.bbox, clip_on=True, 
-                    ha='center', va='baseline', fontsize=7*scale, transform=cartopy.crs.PlateCarree())
+                    ha='center', va='center', fontsize=7*scale, transform=cartopy.crs.PlateCarree())
         elif i == len(group)-1:
             # last half-segment
             row_1 = group.iloc[i-1]
             row1 = group.iloc[i]
             ax.text(row.lon, row.lat, end_label, clip_box=ax.bbox, clip_on=True,
-                    ha='center', va='baseline', fontsize=7*scale, transform=cartopy.crs.PlateCarree())
+                    ha='center', va='center', fontsize=7*scale, transform=cartopy.crs.PlateCarree())
         else:
             # middle segments
             row_1 = group.iloc[i-1]
@@ -620,7 +620,7 @@ def plot_track(ax, start_label,group,end_label, scale=1, debug=False, label_inte
         dlon = max(lons) - min(lons)
         span_dateline = dlon > 180.
         if span_dateline:
-            print(f"{row.cy} spans dateline")
+            logging.warning(f"{row.cy} spans dateline")
             lons[lons < 0] += 360
         logging.debug(f"{i} plot segment {lons} {lats}")
         
@@ -636,13 +636,14 @@ def plot_track(ax, start_label,group,end_label, scale=1, debug=False, label_inte
     label = "track label description"
     already_annotated = label in [x.get_label() for x in ax.texts]
     if lformat and not already_annotated:
-        ax.annotate(text="day of month at hour 0", xy=(3,3), xycoords='axes pixels', fontsize=6, label=label)
+        ax.annotate(text="day of month at hour 0", xy=(5,6), xycoords='axes pixels', fontsize=6, label=label, bbox={'facecolor':'white',
+            'linewidth':0, 'alpha':.9, 'pad':0.1, 'boxstyle':'round4'})
 
 def TClegend(ax):
     # legend was screen-grabbed from tropicalatlantic.com
     img = plt.imread('/glade/work/ahijevyc/share/TClegend.png')
     xmin, dx = 0, 1
-    ymin = ax.get_position().ymin/2
+    ymin = ax.get_position().ymin/2 # halfway between bottom of axes and bottom of figure
     hgt, wid, _ = img.shape
     dy = dx*hgt/wid
     legax = ax.figure.add_axes([xmin, ymin, dx, dy])
@@ -651,18 +652,18 @@ def TClegend(ax):
     legax.imshow(img)
     return legax
 
-def interpolate_by_rad(rad, interval, debug=False):
+def interpolate_by_rad(rad, interval):
     # Interpolate in time 
     # This should be from one wind speed threshold 
-    if debug: print("atcf.interpolate(): padding",rad.name)
-    rad = rad.set_index('valid_time').resample(interval).interpolate(method='time').fillna(method='pad')
+    logging.debug(f"atcf.interpolate(): padding {rad.name}")
+    rad = rad.set_index('valid_time').resample(interval).interpolate(method='pad')
     # redo model track circular heading
     speed, heading = speed_heading(rad.lon.values*degE, rad.lat.values*degN, rad.index)
     rad["heading"] = heading 
     rad = rad.reset_index() # return valid_time from index to column
     return rad 
 
-def interpolate(df, interval, debug=False):
+def interpolate(df, interval):
 
     if interval not in ['1H','3H','6H','12H','24H']:
         logging.error(f"atcf.interpolate(): unexpected time interval {interval}")
@@ -671,8 +672,7 @@ def interpolate(df, interval, debug=False):
 
     # Copied from ~ahijevyc/bin/interpolate_atcf.py on Mar 2, 2020. This method should supercede that script.
 
-    if debug:
-        print("atcf.interpolate():",interval)
+    logging.debug(f"atcf.interpolate() {interval}")
 
     nbad = df.valid_time.isna().sum()
     if nbad > 0:
@@ -688,26 +688,24 @@ def interpolate(df, interval, debug=False):
     # Interpolate in time
     # handle multiple models, init_times, etc.
     byrad = ['basin', 'cy', 'initial_time', 'model', 'rad']
-    df = df.groupby(byrad, as_index=False, group_keys=False).apply(interpolate_by_rad, interval, debug=debug)
+    df = df.groupby(byrad, as_index=False, group_keys=False).apply(interpolate_by_rad, interval)
     df = df.sort_values(by=['basin','cy','initial_time','model','valid_time','rad']) 
     return df
 
 
-def stringlatlon2float(df, debug=False):
+def stringlatlon2float(lon, lat):
     # Extract last character of lat and lon columns
     # Multiply integer by -1 if "S" or "W"
     # Divide by 10
-    S = df.lat.str[-1] == 'S'
-    lat = df.lat.str[:-1].astype(float) / 10.
+    S = lat.str[-1] == 'S'
+    lat = lat.str[:-1].astype(float) / 10.
     lat[S] = lat[S] * -1
-    df.lat = lat
-    W = df.lon.str[-1] == 'W'
-    lon = df.lon.str[:-1].astype(float) / 10.
+    W = lon.str[-1] == 'W'
+    lon = lon.str[:-1].astype(float) / 10.
     lon[W] = lon[W] * -1
-    df.lon = lon
 
     logging.debug("finished converting string lat/lons to float")
-    return df
+    return lon, lat
 
 # rad1-4 and seas1-4 columns
 rscols = []
@@ -715,24 +713,23 @@ for f in ["rad", "seas"]:
     for r in ["1", "2", "3", "4"]:
         rscols.append(f+r)
         
-def expand_wind_radii(df, rads=['34','50','64'], debug=False):
+def expand_wind_radii(df, rads=['34','50','64']):
     df = df.set_index("rad").reindex(rads) # make sure full set of thresholds is defined. original dataframe may not have them all.
     df[rscols] = df[rscols].fillna(value=0) # fill missing rad1-4 and seas1-4 with zeros
     df = df.fillna(method='ffill')
     return df
 
-def return_expandedwindradii(df, rads=["34","50","64"], debug=False):
+def return_expandedwindradii(df, rads=["34","50","64"]):
     tracktimes = df.groupby(['basin','cy','initial_time','model','fhr'], sort=False) 
-    df = tracktimes.apply(expand_wind_radii, rads=rads, debug=debug)
+    df = tracktimes.apply(expand_wind_radii, rads=rads)
     df = df.droplevel(['basin','cy','initial_time','model','fhr']).reset_index()
     return df
 
-def add_missing_dummy_columns(df, columns, debug=False):
+def add_missing_dummy_columns(df, columns):
     for col in columns:
         if col in df.columns:
             continue
-        if debug:
-            print(col, 'not in DataFrame. Fill with appropriate value.')
+        logging.debug(f"{col} not in DataFrame. Fill with appropriate value.")
 
         # if column doesn't exist make it zeroes
         if col in ['rad1', 'rad2', 'rad3', 'rad4','pouter', 'router', 'seas', 'seas1','seas2','seas3','seas4']:
@@ -751,7 +748,7 @@ def add_missing_dummy_columns(df, columns, debug=False):
             df[col] = np.NaN
 
         # Strings are empty
-        elif col in ['subregion','stormname','userdefine1','userdata1','userdefine2','userdata2','userdefine3','userdata3','userdefine4','userdata4']:
+        elif col in ['subregion','stormname'] or col.startswith('user'):
             df[col] = ''
 
         elif col in ['ty']:
@@ -760,7 +757,7 @@ def add_missing_dummy_columns(df, columns, debug=False):
         elif col in ['initials', 'depth']:
             df[col] = 'X'
         else:
-            print(f"atcf.add_missing_dummy_columns(): unexpected col {col}")
+            logging.error(f"atcf.add_missing_dummy_columns(): unexpected col {col}")
             sys.exit(1)
 
     return df        
@@ -789,7 +786,7 @@ def read_aswip(ifile = ifile, debug=False):
         na_values=na_values, dtype=dtype, skipinitialspace=True, engine='c') # engine='c' is faster than engine="python"
 
     # convert string lat lon column to float. So we can write atcf file. valid_time not needed by write() method..
-    df = stringlatlon2float(df)
+    df["lon"], df["lat"] = stringlatlon2float(df.lon, df.lat)
 
     # Add missing ATCF columns with dummy data.
     df = add_missing_dummy_columns(df, atcfcolumns)
@@ -799,35 +796,29 @@ def read_aswip(ifile = ifile, debug=False):
 
     return df
 
-def read(ifile = ifile, debug=False, fullcircle=False):
+def read(ifile = ifile, fullcircle=False):
     # Read data into Pandas Dataframe
-    if debug:
-        print('Reading', ifile, 'fullcircle=', fullcircle)
-
-
+    logging.debug(f'Reading {ifile} fullcircle={fullcircle}')
 
     names = list(atcfcolumns) # make a copy of list, not a copy of the reference to the list.
 
     reader = csv.reader(open(ifile),delimiter=',')
     testline = next(reader)
     num_cols = len(testline)
-    if debug:
-        print("test line num_cols:", num_cols)
-        print(testline)
+    logging.debug(f"test line num_cols {num_cols}")
+    logging.debug(testline)
     del reader
     with open(ifile) as f:
         max_num_cols = max(len(line.split(',')) for line in f)
-        if debug:
-            print("max number of columns", max_num_cols)
+        logging.debug(f"max number of columns {max_num_cols}")
 
     # Output from GFDL vortex tracker, fort.64 and fort.66
     # are mostly ATCF format but have subset of columns
     if num_cols == 43:
-        print('assume GFDL tracker fort.64-style output with 43 columns in', ifile)
+        logging.info(f'assume GFDL tracker fort.64-style output with 43 columns in {ifile}')
         TPstr = "THERMO PARAMS"
         if testline[35].strip() != TPstr:
-            print("expected 36th column to be", TPstr)
-            print("got", testline[35].strip())
+            logging.error(f"expected 36th column to be {TPstr}. got {testline[35].strip()}")
             sys.exit(4)
         for ii in range(20,35):
             names[ii] = "space filler" + str(ii-19) # duplicate names not allowed
@@ -841,7 +832,7 @@ def read(ifile = ifile, debug=False, fullcircle=False):
 
     # fort.66 has track id in the 3rd column.
     if num_cols == 31:
-        print('Assuming GFDL track fort.66-style with 31 columns in', ifile)
+        logging.info(f'Assuming GFDL track fort.66-style with 31 columns in {ifile}')
         # There is a cyclogenesis ID column for fort.66
         logging.debug('inserted ID for cyclogenesis in column 2 (zero-based)')
         names.insert(2, 'id') # ID for the cyclogenesis
@@ -876,18 +867,27 @@ def read(ifile = ifile, debug=False, fullcircle=False):
 
     if len(names) > max_num_cols:
         names = names[0:max_num_cols]
+
+
+    # Tack on user define/data column pairs until all available columns are given names.
+    usercolumnindex = 5
+    while len(names) < max_num_cols-1:
+        names.append(f"userdefine{usercolumnindex}")
+        names.append(f"userdata{usercolumnindex}")
+        usercolumnindex += 1
+
+
     usecols = list(range(len(names)))
 
     # If you get a beyond index range (or something like that) error, see if userdata1 column is intermittent and has commas in it. 
     # If so, clean it up (i.e. truncate it)
 
-    if debug:
-        print("before pd.read_csv")
-        for name,v in zip(names,testline):
-            print(name+": "+v)
-        print("converters=",converters)
-        print("dype=", dtype)
-        print("column_units=", column_units)
+    logging.debug("before pd.read_csv")
+    for name,v in zip(names,testline):
+        logging.debug(f"{name}:{v}")
+    logging.debug(f"converters={converters}")
+    logging.debug(f"dype={dtype}")
+    logging.debug(f"column_units={column_units}")
 
 
     df = pd.read_csv(ifile,index_col=None,header=None, delimiter=",", usecols=usecols, names=names, 
@@ -896,17 +896,15 @@ def read(ifile = ifile, debug=False, fullcircle=False):
     # fort.64 has asterisks sometimes. Problem with hwrf_tracker. 
     badlines = df['lon'].str.contains("\*")
     if any(badlines):
-        print(f"tossing {len(badlines)} lines with asterisk in lon")
+        print.warning(f"tossing {len(badlines)} lines with asterisk in lon")
         df = df[~badlines]
 
 
-
-    df = stringlatlon2float(df, debug=debug)
+    df["lon"], df["lat"] = stringlatlon2float(df.lon, df.lat)
 
     if max_num_cols != num_cols and df.model.nunique() > 1:
-        print("atcf.read(): test line has", num_cols, "columns, but another line has ", max_num_cols, "columns.")
-        print("atcf.read(): may not handle different numbers of columns.")
-        print("It's hard to deal with userdefined columns and data in a file with multiple types of models.")
+        logging.warning(f"test line has {num_cols} columns, but another line has {max_num_cols} columns. Unexpected results may occur.")
+        logging.warning("It's hard to deal with userdefined columns and data in a file with multiple types of models.")
         
 
     # Derive valid time.   valid_time = initial_time + fhr (used in read_aswip too)
@@ -923,17 +921,16 @@ def read(ifile = ifile, debug=False, fullcircle=False):
     # Prior to 1999, rad column is blank. Fill with string zeros. 
     # Downstream programs assume rads are convertable to floats. Empty strings are not convertable to floats.
     if "rad" not in df.columns or all(df.rad == ''):
-        if debug:
-            print("atcf.read(): Empty rad column. This happens in pre-2000 files. Changing to string '0' so we can convert to float downstream")
+        logging.warning("atcf.read(): Empty rad column. This happens in pre-2000 files. Changing to string '0' so we can convert to float downstream")
         df["rad"] = '0'
 
     # sanity check for rad values
     if not all(df.rad.isin(['0','34','50','64'])):
-        print("atcf.read(): unexpected rad value(s) in atcf file",ifile)
-        print(df.rad.value_counts())
+        logging.warning(f"atcf.read(): unexpected rad value(s) in atcf file {ifile}")
+        logging.warning(df.rad.value_counts())
         # adecks before 2002 had 35-knot lines, not 34. That's okay. 
         if df.valid_time.min().year > 2001:
-            print("atcf.read(): this should not happen with post-2001 files. Exiting.")
+            logging.error("atcf.read(): this should not happen with post-2001 files. Exiting.")
             sys.exit(1)
 
     # Add missing ATCF columns with dummy data.
@@ -945,14 +942,14 @@ def read(ifile = ifile, debug=False, fullcircle=False):
 
     missing_speed_heading = all(((df.speed == 0) | pd.isnull(df.speed)) & ((df.heading == 0) | pd.isnull(df.heading))) # assume bad if everything is zero
     if missing_speed_heading:
-        if debug:
-            print("Deriving speed and heading")
+        logging.debug("Deriving speed and heading")
         df = df.groupby(unique_track).apply(fill_speed_heading)
         df = df.droplevel(unique_track) # indices are nice but mess up plot_atcf.py later. 
 
-    # Put userdefine/userdata column pairs into single columns. Allow unaligned user columns from multiple atcf files.
-    for x in range(1,5):
-        x = str(x)
+    # Put userdefine/userdata column pairs into single columns. 
+    # Allow unaligned userdefine columns from multiple atcf files.
+    # ["1", "2", "3", ... ] 
+    for x in [str(x) for x in range(1,usercolumnindex)]: 
         # for each unique userdefine value in column 
         for v in df["userdefine"+x].unique():
             if v == "": continue # Ignore empty strings
@@ -1100,8 +1097,7 @@ def get_ext_of_wind(wind_speed, distance, bearing, raw_vmax, windcode='NEQ', win
         if distance.ndim == 2:
             imax = distance.where(wind_speed >= wind_thresh).argmax(distance.dims)
             # warn if max_dist_of_wind_threshold is on edge of 2-d domain (like nested WRF grid)
-            if debug:
-                print("  get_ext_of_wind(): imax", imax)
+            logging.debug(f"  get_ext_of_wind(): imax {imax}")
             for dim, i in imax.items():
                 if i == 0 or i == distance[dim].size-1:
                     print(f"  get_ext_of_wind(): R{wind_thresh} at edge of domain. {imax} shape: {distance.shape}")
@@ -1518,28 +1514,25 @@ def veer_track(track, veer):
 
 
 if __name__ == "__main__":
-    debug=False
-    df = read(ifile=sys.argv[1], debug=debug)
-    df = interpolate(df, '3H')
+    df = read(ifile=sys.argv[1])
     #df = df.loc[df.valid_time >= pd.to_datetime("20121027")]  # delay the perturbation to SANDY
     #df = df.loc[df.valid_time <= pd.to_datetime("201210311200")]  # truncate end
     unique_track = ['basin', 'cy', 'initial_time', 'model']
-    perts = np.arange(-2,3,1) * units["deg/day"] # directional error
-    perts = np.arange(-50,51,25) * units["km/day"] # cross-track error
+    perts = np.arange(-2,3,1) * units.parse_expression("deg/day") # directional error
+    perts = np.arange(-50,51,25) * units.parse_expression("km/day") # cross-track error
     ofile = f"perts{perts[0].m}-{perts[-1].m}"
     if os.path.exists(ofile+".dat"):
-        print(ofile+".dat exists already. Will append")
+        logging.info(f"{ofile}.dat exists already. Will append")
     ax = get_ax()
     for track_id, track_df in df.groupby(unique_track):
-        print(track_id)
-        track_df = track_df.loc[track_df.valid_time >= pd.to_datetime("20110824")]  # delay perturbation 
-        track_df = track_df.loc[track_df.valid_time < pd.to_datetime("20110828")]
+        track_df = interpolate(track_df, '3H')
+        logging.info(track_id)
         for PF, pert in enumerate(perts): 
-            ptrack = cross_track(track_df, pert, debug=debug)
+            ptrack = cross_track(track_df, pert)
             ptrack["model"] = "PF{:02.0f}".format(PF)
-            plot_track(ax, "", ptrack, "{:~3.1f}".format(pert), label_interval_hours=24, scale=0.8, debug=debug)
+            plot_track(ax, "", ptrack, "{:~3.1f}".format(pert), label_interval_hours=24, scale=0.8)
             write(ofile+".dat", ptrack, append=True)
-    l = TClegend(ax.figure, up=1, left=1)
+    l = TClegend(ax.figure)
     plt.savefig(ofile + ".png", dpi=200)
     print(ofile+".dat")
     print(ofile+".png")
