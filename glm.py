@@ -29,7 +29,7 @@ def get_das(ds):
         coords[ftype] = [name for name in ds.coords if dim in ds[name].dims]
     return das, coords
 
-def download(start, end, bucket="noaa-goes17", product="GLM-L2-LCFA", odir=GLMDIR, clobber=False, debug=False):
+def download(start, end, bucket="noaa-goes16", product="GLM-L2-LCFA", odir=GLMDIR, clobber=False, debug=False):
     start = pd.to_datetime(start)
     end   = pd.to_datetime(end) # allow strings
     fs = s3fs.S3FileSystem(anon=True)
