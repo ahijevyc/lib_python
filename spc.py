@@ -104,7 +104,7 @@ def spc_lsr_filename(event_type, latestyear=2020):
 
 
 def get_storm_reports( start = datetime.datetime(2016,6,10,tzinfo=pytz.UTC), end = datetime.datetime(2016,7, 1,tzinfo=pytz.UTC), 
-        event_types = ["torn", "wind", "hail"], latestyear = 2020, RyanSobashSanityCheck=False):
+        event_types = ["torn", "wind", "hail"], latestyear = 2020, combine_sig= False, RyanSobashSanityCheck=False):
 
     # Return a DataFrame with local storm reports (LSRs) downloaded from SPC.
     # Choices are tornado, hail, and/or wind.
@@ -119,9 +119,7 @@ def get_storm_reports( start = datetime.datetime(2016,6,10,tzinfo=pytz.UTC), end
     #   rpts - DataFrame with time, location, and description of event (LSR)
 
 
-    logging.debug(f"get_storm_reports: start:{start}")
-    logging.debug(f"get_storm_reports: end:{end}")
-    logging.debug(f"get_storm_reports: event types:{event_types}")
+    logging.debug(f"get_storm_reports from {start} to {end}")
 
 
     # Create one DataFrame with all requested LSR event types.
@@ -328,6 +326,9 @@ def get_storm_reports( start = datetime.datetime(2016,6,10,tzinfo=pytz.UTC), end
 
         all_rpts = pd.concat([all_rpts,rpts], axis="index") # Append this storm report event_type
 
+    if combine_sig:
+        all_rpts = combine_significant(all_rpts)
+
     return all_rpts
 
 def symbol_dict(scale=1):
@@ -419,7 +420,7 @@ def centroid_polar(theta_deg, r):
     return az, r
 
 def combine_significant(storm_reports):
-    # combine torn and sigtorn, wind and "high wind", hail and "large hail"
+    # Make torn and sigtorn, wind and "high wind", hail and "large hail" have the same event_type.
     sigtorn = storm_reports["event_type"] == "sigtorn"
     storm_reports.loc[sigtorn, "event_type"] = "torn"
     sigwind = storm_reports["event_type"] == "high wind"
@@ -497,14 +498,11 @@ def polarkde(originlon, originlat, storm_reports, ax, azbins, rbins, spc_td, ds=
         logging.debug("spc.polarkde(): storm reports DataFrame is empty. Returning None")
         return storm_rpts_kde
 
-    geo = cartopy.geodesic.Geodesic()
-    # Use .m because geo.inverse does not work with quantities.
-    n3 = geo.inverse((originlon.m, originlat.m), np.column_stack((storm_reports["slon"], storm_reports["slat"])))
-    n3 = np.asarray(n3) # convert cartopy MemoryView to ndarray
-    storm_reports["range"] = n3[:,0]/1000. # geo.inverse returns meters; convert to km
+    dist_from_origin, heading = gdist_bearing(originlon, originlat, storm_reports["slon"].values * units_degrees_E, storm_reports["slat"].values * units.degrees_N)
+    storm_reports["range"] = dist_from_origin
     if normalize_range_by:
         storm_reports["range"] /= normalize_range_by
-    storm_reports["heading"] = n3[:,1]  # in deg
+    storm_reports["heading"] = heading
     storm_reports["heading"] = (storm_reports["heading"] - zero_azimuth.m + 720) % 360 # remove units from zero_azimuth, or it assumes other variables are radians.
     rmax = ax.get_ylim()[1] * units.km
     inrange = storm_reports["range"].values * units.km  < rmax # have to use .values because units won't stick to pandas Series.
@@ -559,10 +557,23 @@ def polarkde(originlon, originlat, storm_reports, ax, azbins, rbins, spc_td, ds=
         storm_rpts_kde[event_type] = pkde # thought about QuadContourSet polarc, but you can't back out data from it.
     return storm_rpts_kde
 
+# Geodesic "G" dist_bearing
+def gdist_bearing(originlon, originlat, lons, lats):
+    geo = cartopy.geodesic.Geodesic()
+    # Use .m because geo.inverse does not work with Quantities.
+    n3 = geo.inverse((originlon.m, originlat.m), np.column_stack((lons, lats)))
+    dist_from_origin = n3[:,0]/1000 * units.km # geo.inverse returns meters; convert to km
+    heading = n3[:,1] # in deg
+    heading = (heading + 360) % 360
+    heading = heading * units.deg
+    return dist_from_origin, heading
 
 def polarplot(originlon, originlat, storm_reports, ax, zero_azimuth=0*units.deg, add_legend=False, normalize_range_by=None, scale=1, alpha=0.8,
         legend_title=None):
     # Return storm_reports DataFrame with additional "range" and "heading" columns
+
+    if isinstance(storm_reports, pd.Series):
+        storm_reports = storm_reports.to_frame().T # in case it is a one line Series.
 
     storm_reports["range"] = None
     storm_reports["heading"] = None
@@ -574,14 +585,11 @@ def polarplot(originlon, originlat, storm_reports, ax, zero_azimuth=0*units.deg,
     # Color, size, marker, and label of wind, hail, and tornado storm reports
     kwdict = symbol_dict(scale=scale)
 
-    geo = cartopy.geodesic.Geodesic()
-    # Use .m because geo.inverse does not work with quantities.
-    n3 = geo.inverse((originlon.m, originlat.m), np.column_stack((storm_reports["slon"], storm_reports["slat"])))
-    n3 = np.asarray(n3) # convert cartopy MemoryView to ndarray
-    storm_reports["range"] = n3[:,0]/1000. # geo.inverse returns meters; convert to km
+    dist_from_origin, heading = gdist_bearing(originlon, originlat, storm_reports["slon"].values * units.degrees_E, storm_reports["slat"].values * units.degrees_N)
+    storm_reports["range"] = dist_from_origin
     if normalize_range_by:
         storm_reports["range"] /= normalize_range_by
-    storm_reports["heading"] = n3[:,1]  # in deg
+    storm_reports["heading"] = heading 
     storm_reports["heading"] = (storm_reports["heading"] - zero_azimuth.m + 720) % 360 # if zero_azimuth has units, it assumes radians for numbers without units.
 
     # Filter out points beyond the max range of axis
