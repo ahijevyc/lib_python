@@ -15,7 +15,7 @@ def get_diag_name(valid_time, prefix='diag.', suffix='.nc'):
     diag_name = prefix + valid_time.strftime("%Y-%m-%d_%H.%M.%S") + suffix
     return diag_name
 
-def raw_vitals(row, diagdir, lonCell, latCell, wind_radii_method=None, debug=False):
+def raw_vitals(row, diagdir, lonCell, latCell, wind_radii_method=None):
     row = row.head(1).squeeze() # make multiple rad lines one series
     assert 'originalmeshfile' not in row, f"{row} already has original mesh vitals"
     diagfile = get_diag_name(row.valid_time, prefix='diag.', suffix='.nc')
@@ -27,16 +27,16 @@ def raw_vitals(row, diagdir, lonCell, latCell, wind_radii_method=None, debug=Fal
     ds = ds.isel(Time=0)
 
     # Extract vmax, RMW, minp, and radii of wind thresholds
-    derived_winds_dict = atcf.derived_winds(ds.u10, ds.v10, ds.mslp, lonCell, latCell, row, wind_radii_method=wind_radii_method, debug=debug)
+    derived_winds_dict = atcf.derived_winds(ds.u10, ds.v10, ds.mslp, lonCell, latCell, row, wind_radii_method=wind_radii_method)
     row = atcf.unitless_row(derived_winds_dict, row)
 
     row["originalmeshfile"] = diagfile
     # replace the row with (possibly) multiple rows with different wind radii (34/50/64 knot) 
-    row = atcf.add_wind_rad_lines(row, derived_winds_dict["wind_radii"], debug=debug)
+    row = atcf.add_wind_rad_lines(row, derived_winds_dict["wind_radii"])
     return row
 
 
-def origmesh(df, initfile, diagdir, wind_radii_method="max", debug=False):
+def origmesh(df, initfile, diagdir, wind_radii_method="max"):
     # assert this is a single track
     assert df.groupby(['basin','cy','initial_time','model']).ngroups == 1, 'mpas.origmesh got more than 1 track'
 
@@ -69,7 +69,7 @@ def origmesh(df, initfile, diagdir, wind_radii_method="max", debug=False):
         latCell = initfile["latCell"]
 
     # Only groupby 'fhr'. This should already be a single unique track.
-    df = df.groupby('fhr').apply(raw_vitals,diagdir,lonCell,latCell,wind_radii_method=wind_radii_method,debug=debug)
+    df = df.groupby('fhr').apply(raw_vitals,diagdir,lonCell,latCell,wind_radii_method=wind_radii_method)
     if "fhr" in df.index.names: # Don't know why it sometimes is not an index
         # don't return with fhr as index
         df = df.droplevel('fhr')
@@ -151,7 +151,7 @@ for plev in ['200', '250', '300', '500', '700', '850', '925']:
     fieldinfo['wind'+plev] = { 'fname' : ['uzonal_'+plev+'hPa', 'umeridional_'+plev+'hPa'], 'filename':'diag', 'skip':50}
 
 
-def makeEnsembleListMPAS(wrfinit, timerange, ENS_SIZE, g193=False, debug=False):
+def makeEnsembleListMPAS(wrfinit, timerange, ENS_SIZE, g193=False):
     # create lists of files (and missing file indices) for various file types
     shr, ehr = timerange
     file_list    = { 'wrfout':[], 'diag':[] }
