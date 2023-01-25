@@ -210,7 +210,7 @@ class Atcf(pd.DataFrame):
         super().__init__(x)
     # No need for ntrack attribute. Use df.groupby(unique_track).ngroups
 
-    def write(self, ofile, fullcircle=False, append=False, debug=False):
+    def write(self, ofile, fullcircle=False, append=False):
         if self.empty:
             logging.warning("afcf.write(): DataFrame is empty.")
 
@@ -220,9 +220,8 @@ class Atcf(pd.DataFrame):
             # deal with fullcircle.
             self = self.groupby(["basin","cy","initial_time","fhr","rad"]).apply(fullcircle_windradii)
 
-        if debug:
-            print(f"writing {models} to {ofile}")
-            print(self.head(1))
+        logging.debug(f"writing {models} to {ofile}")
+        logging.debug(self.head(1))
 
         assert 0 not in self.columns, 'TODO: stop putting 0 column'
 
@@ -384,7 +383,7 @@ def vmax2category(vmax):
     return category, colors[category]
 
 
-def vmax_HollandB_to_minp(vmax_kts, HollandB, environmental_pressure_hPa = 1013, density_of_air = 1.15*units.parse_expression("kg/m^3"), debug=False):
+def vmax_HollandB_to_minp(vmax_kts, HollandB, environmental_pressure_hPa = 1013, density_of_air = 1.15*units.parse_expression("kg/m^3")):
     vmax = vmax_kts * kt.to("m/s")
     environmental_pressure = environmental_pressure_hPa* hPa.to("Pa")
     minp = environmental_pressure - (vmax**2 * density_of_air * math.e / HollandB)
@@ -453,7 +452,7 @@ def V500c(Vmax, latitude_degrees):
             climatological_tangential_wind_500_km_from_the_center[Vmax_knots < 15] = Vmax_knots[Vmax_knots < 15]
     return climatological_tangential_wind_500_km_from_the_center * kt
 
-def Knaff_Zehr_Pmin(Vsrm1, storm_size_S, latitude_degrees, environmental_pressure, debug=False):
+def Knaff_Zehr_Pmin(Vsrm1, storm_size_S, latitude_degrees, environmental_pressure):
     # Equation 1 in Courtney and Knaff http://rammb.cira.colostate.edu/resources/docs/Courtney&Knaff_2009.pdf
     #environmental_pressure_hPa = environmental_pressure.to("hPa").m
     #Vsrm1_knots = Vsrm1.to("knots").m
@@ -577,7 +576,7 @@ def mean_track(df):
     df["model"] = "MEAN"
     return df
 
-def plot_track(ax, start_label,group,end_label, scale=1, debug=False, label_interval_hours=1):
+def plot_track(ax, start_label,group,end_label, scale=1, label_interval_hours=1):
     logging.debug(f"plot_track: {start_label} {group}")
     group = group.sort_values("valid_time")
 
@@ -765,10 +764,9 @@ def add_missing_dummy_columns(df, columns):
 ifile = '/glade/work/ahijevyc/work/atcf/Irma.ECMWF.dat'
 ifile = '/glade/scratch/mpasrt/uni/2018071700/latlon_0.500deg_0.25km/gfdl_tracker/tcgen/fort.64'
 
-def read_aswip(ifile = ifile, debug=False):
+def read_aswip(ifile = ifile):
     # Read data into Pandas Dataframe
-    if debug:
-        print('Reading', ifile)
+    logging.debug(f'Reading {ifile}')
 
     # https://adcirc.org/home/documentation/users-manual-v50/input-file-descriptions/single-file-meteorological-forcing-input-fort-22/
     #           1     2         3            4        5      6     7     8     9     10     11
@@ -1058,7 +1056,7 @@ def get_azimuthal_mean(x, distance, binsize = 25.*units.km):
 
 
 def get_ext_of_wind(wind_speed, distance, bearing, raw_vmax, windcode='NEQ', wind_threshes=wind_threshes, 
-        rad_search_radius=300.*units.parse_expression("nautical_mile"), lonCell=None, latCell=None, debug=False, wind_radii_method='max'):
+        rad_search_radius=300.*units.parse_expression("nautical_mile"), lonCell=None, latCell=None, wind_radii_method='max'):
     
     wind_radii = {"wind_radii_method":wind_radii_method}
     # Returns dictionary "wind_radii" where
@@ -1087,9 +1085,8 @@ def get_ext_of_wind(wind_speed, distance, bearing, raw_vmax, windcode='NEQ', win
         wind_radii['rads'][wind_threshes[0]] = [0,0,0,0]*units.km # write out zero rads for first wind threshold and return 
         return wind_radii
 
-    if debug:
-        print(f'  get_ext_of_wind(): method {wind_radii_method} windcode {windcode}')
-        print('  get_ext_of_wind(): wind_thresh     azimuth       npts    dist   bearing      lat        lon')
+    logging.debug(f'  get_ext_of_wind(): method {wind_radii_method} windcode {windcode}')
+    logging.debug('  get_ext_of_wind(): wind_thresh     azimuth       npts    dist   bearing      lat        lon')
 
     for wind_thresh in wind_threshes:
         if (wind_speed >= wind_thresh).sum() == 0:
@@ -1132,14 +1129,14 @@ def get_ext_of_wind(wind_speed, distance, bearing, raw_vmax, windcode='NEQ', win
                         sys.exit(1)
                 else:
                     wind_radii['rads'][wind_thresh].append(0.*units.km)
-            if debug:
-                print(f'  get_ext_of_wind():   {wind_thresh}   {az:~03.0f}-{az+daz:~03.0f}  {iquad.sum().data:5d}',
-                      f'  {wind_radii["rads"][wind_thresh][-1]:~03.0f}', end="") # leading zeros to keep same number of columns
-                if iquad.sum():
-                    print(f'  {bearing.isel(idist_of_wind_threshold).data:~03.0f}', 
-                          f'  {latCell.isel(idist_of_wind_threshold).data:~03.1f}',
-                          f'  {lonCell.isel(idist_of_wind_threshold).data:~04.1f}', end="")
-                print()
+
+            # leading zeros to keep same number of columns
+            debugmsg = f'  get_ext_of_wind():   {wind_thresh}   {az:~03.0f}-{az+daz:~03.0f}  {iquad.sum().data:5d}  {wind_radii["rads"][wind_thresh][-1]:~03.0f}'
+            if iquad.sum():
+                debugmsg += f'  {bearing.isel(idist_of_wind_threshold).data:~03.0f}'
+                debugmsg += f'  {latCell.isel(idist_of_wind_threshold).data:~03.1f}'
+                debugmsg += f'  {lonCell.isel(idist_of_wind_threshold).data:~04.1f}'
+            logging.debug(debugmsg)
                       
                       
         
@@ -1223,16 +1220,14 @@ def derived_winds(u10, v10, mslp, lonCell, latCell, row, vmax_search_radius=250.
 
     # Get radius of max wind
     raw_rmw = distance.isel(ispeed_max).data
-    if debug:
-        print(" TC center", row.valid_time, row.lat, row.lon, end="")
-        print(f',  max wind {raw_vmax:~3.1f} @  {latCell.isel(ispeed_max).data:~3.1f}  {lonCell.isel(ispeed_max).data:~4.1f}  {raw_rmw:~3.0f}')
+    logging.debug(f" TC center {row.valid_time} {row.lat} {row.lon},  max wind {raw_vmax:~3.1f} @  {latCell.isel(ispeed_max).data:~3.1f}  {lonCell.isel(ispeed_max).data:~4.1f}  {raw_rmw:~3.0f}")
 
     # Restrict min mslp search
     mslprad = distance < mslp_search_radius
     raw_minp = mslp.where(mslprad).min().data
 
     # Get max extent of wind at thresh_kts thresholds.
-    wind_radii = get_ext_of_wind(speed, distance, bearing, raw_vmax, latCell=latCell, lonCell=lonCell, wind_radii_method=wind_radii_method, debug=debug)
+    wind_radii = get_ext_of_wind(speed, distance, bearing, raw_vmax, latCell=latCell, lonCell=lonCell, wind_radii_method=wind_radii_method)
 
     # Restrict pressure of last closed isobar and radius of last closed isobar search to a certain radius.
     pouter_rad = distance < pouter_search_radius
@@ -1279,7 +1274,7 @@ def fullcircle_windradii(row):
     return row
 
 
-def add_wind_rad_lines(row, wind_radii, debug=False):
+def add_wind_rad_lines(row, wind_radii):
     lines = []
     for thresh in wind_radii['rads']:
         # row with 34, 50, or 64 knot radii
@@ -1292,7 +1287,7 @@ def add_wind_rad_lines(row, wind_radii, debug=False):
         lines.append(newrow)
     return pd.DataFrame(lines)
 
-def origgridWRF(df, griddir, grid="d03", wind_radii_method = "max", debug=False):
+def origgridWRF(df, griddir, grid="d03", wind_radii_method = "max"):
     # Get vmax, minp, radius of max wind, max radii of wind thresholds from WRF by Alex Kowaleski
     
     # assert this is a single track
@@ -1303,12 +1298,10 @@ def origgridWRF(df, griddir, grid="d03", wind_radii_method = "max", debug=False)
     WRFmember = df.model.str.extract(wregex, flags=re.IGNORECASE)
     # column 0 will have match or null
     if pd.isnull(WRFmember.iloc[:,0]).any():
-        if debug:
-            print('Assuming WRF ensemble member, but not all model strings match '+wregex)
-            print(df)
+        logging.warning(f'Assuming WRF ensemble member, but not all model strings match {wregex}')
         pdb.set_trace()
     ens = WRFmember.iloc[0,0]
-    df = df.groupby('fhr').apply(WRFraw_vitals,griddir, ens,wind_radii_method=wind_radii_method,debug=debug)
+    df = df.groupby('fhr').apply(WRFraw_vitals,griddir, ens,wind_radii_method=wind_radii_method)
     df = df.droplevel('fhr')
     return df
 
@@ -1330,10 +1323,10 @@ def WRFraw_vitals(fhr, griddir, ens, wind_radii_method='max'):
     latCell = xarray.DataArray(latCell*units(ds.lat_0.units), coords=u10.coords) # or else derived_winds() chokes on distance.isel()
 
     logging.debug(f"Extract vmax, RMW, minp, and radii of wind thresholds from row {row.name}")
-    derived_winds_dict = derived_winds(u10, v10, mslp, lonCell, latCell, row, wind_radii_method=wind_radii_method, debug=debug)
+    derived_winds_dict = derived_winds(u10, v10, mslp, lonCell, latCell, row, wind_radii_method=wind_radii_method)
     return row
 
-def origgrid(df, griddir, ensemble_prefix="ens_", wind_radii_method="max", debug=False):
+def origgrid(df, griddir, ensemble_prefix="ens_", wind_radii_method="max"):
     # Get vmax, minp, radius of max wind, max radii of wind thresholds from ECMWF grid, not from tracker.
     # Assumes
     #   ECMWF data came from TIGGE and were converted from GRIB to netCDF with ncl_convert2nc.
@@ -1392,11 +1385,11 @@ def origgrid(df, griddir, ensemble_prefix="ens_", wind_radii_method="max", debug
     df["originalmeshfile"] = gridfile
     logging.info(f'opening {gridfile}')
     ds = xarray.open_dataset(gridfile).metpy.quantify()
-    df = df.groupby('fhr').apply(ECMWFraw_vitals,ds,wind_radii_method=wind_radii_method,debug=debug)
+    df = df.groupby('fhr').apply(ECMWFraw_vitals,ds,wind_radii_method=wind_radii_method)
     df = df.droplevel('fhr')
     return df
 
-def ECMWFraw_vitals(row, ds, wind_radii_method=None, debug=False):
+def ECMWFraw_vitals(row, ds, wind_radii_method=None):
     row = row.head(1).squeeze() # make multiple wind rad lines one series. 
     forecast_time0 = pd.to_timedelta(row.fhr, unit='H')
     if forecast_time0 not in ds.forecast_time0:
@@ -1411,11 +1404,11 @@ def ECMWFraw_vitals(row, ds, wind_radii_method=None, debug=False):
     latCell = xarray.DataArray(latCell*units(ds.lat_0.units), coords=u10.coords) # or else derived_winds() chokes on distance.isel()
 
     # Extract vmax, RMW, minp, and radii of wind thresholds
-    derived_winds_dict = derived_winds(u10, v10, mslp, lonCell, latCell, row, wind_radii_method=wind_radii_method, debug=debug)
+    derived_winds_dict = derived_winds(u10, v10, mslp, lonCell, latCell, row, wind_radii_method=wind_radii_method)
 
     row = unitless_row(derived_winds_dict, row)
 
-    row = add_wind_rad_lines(row, derived_winds_dict["wind_radii"], debug=debug)
+    row = add_wind_rad_lines(row, derived_winds_dict["wind_radii"])
 
     return row
 
