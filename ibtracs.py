@@ -1,5 +1,6 @@
 import argparse
 import atcf
+from collections import defaultdict
 from datetime import datetime, timedelta
 import logging
 import matplotlib
@@ -74,7 +75,7 @@ def ibtracs_to_atcf(df):
     df["depth"]        = "X"
     df["seascode"]     = "NEQ"
 
-    logging.info("Melt 34,50,64-kt windrad columns into multiple rows")
+    logging.debug("melt 34,50,64-kt windrad columns into multiple rows")
     # Rename USA_R34_NE -> rad1-34,
     #        USA_R34_SE -> rad2-34,
     #          ...
@@ -91,52 +92,23 @@ def ibtracs_to_atcf(df):
 
 
 
-def get_df(version="04r00", basin=""):
+def get_df(stormname=None, year=None, version="04r00", basin="ALL"):
 
     # Get "ALL" file by default. 
-    # Specify basin keyword to read a smaller, more specialized file.
+    # Specify basin keyword to read a smaller, specialized file.
 
     dtype = {
-            'BASIN':str,
-            'NUMBER':str,
             'DS824_STAGE': str,
-            'HKO_CAT'  : str,
-            'LAT': float, 
-            'LON': float, 
             'MLC_CLASS': str,
-            'NEWDELHI_GRADE': str,
-            'NEUMANN_CLASS': str, 
-            'USA_AGENCY': str, 
-            'USA_ATCF_ID': str, 
-            'USA_GUST': float, 
-            'USA_LAT': float, 
-            'USA_LON': float, 
             'USA_RECORD': str, 
-            'USA_SEAHGT': float,
-            'USA_STATUS': str,
-            'WMO_AGENCY':str
             }
-    na_values = [' ','']
 
-    basin = basin.lower()
-    if basin == 'al':
-        region = "NA" # North Atlantic
-    elif basin == 'ep':
-        region = "EP"
-    elif basin == 'ni':
-        region = "NI"
-    elif basin == 'sa':
-        region = "SA"
-    elif basin == 'si':
-        region = "SI"
-    elif basin == 'sp':
-        region = "SP"
-    elif basin == 'wp':
-        region = "WP"
-    else:
-        region = "ALL"
+    region = basin.upper()
+    if region == "AL":
+        region="NA" # North Atlantic
     ifile = os.path.join(idir,f'ibtracs.{region}.list.v{version}.csv')
     if not os.path.exists(ifile):
+        logging.info(f"download {ifile}")
         url  = "https://www.ncei.noaa.gov/data/"
         url += "international-best-track-archive-for-climate-stewardship-ibtracs/"
         url += "v"+version+"/access/csv/ibtracs."+region+".list.v"+version+".csv"
@@ -144,28 +116,14 @@ def get_df(version="04r00", basin=""):
         myfile = requests.get(url)
         open(ifile, "wb").write(myfile.content)
     # keep_default_na=False . we don't want "NA" or North Atlantic to be treated as NA/NaN.
-    # If skipinitialspace=True, add empty string to list of na_values. or you get TypeError. can't convert string to float64.
-    logging.debug(f"read {ifile}")
-    df = pd.read_csv(ifile, delimiter=',', skipinitialspace=True, header=[0,1], na_values=na_values, keep_default_na=False, low_memory=False, dtype=dtype)
+    # Skip row 1 (units)
+    df = pd.read_csv(ifile, header=[0], skiprows=[1], na_values=[' '], keep_default_na=False, dtype=dtype)
     logging.debug(f"ibtracs.get_atcf(): read {len(df)} lines from {ifile}")
-    column_units = {}
-    for column, unit in df.columns:
-        if unit[0:8] == 'Unnamed:':
-            column_units[column] = None
-        elif unit == 'nmile':
-            column_units[column] = 'nautical_mile'
-        elif unit == 'mb':
-            column_units[column] = 'hPa'
-        else:
-            column_units[column] = unit.lower()
 
-    df = df.droplevel(1, axis='columns') # TODO: don't drop level_1 It is units.
-
-    # sanity check - are the wmo and usa lat/lons similar?
-
-    assert (df["LAT"]-df["USA_LAT"]).abs().mean() < 0.1, "wmo and usa latitudes differ a lot"
-    assert (np.sin(np.radians(df["LON"]))-np.sin(np.radians(df["USA_LON"]))).abs().mean() < 0.01, "wmo and usa longitudes differ a lot"
-    assert (np.cos(np.radians(df["LON"]))-np.cos(np.radians(df["USA_LON"]))).abs().mean() < 0.01, "wmo and usa longitudes differ a lot"
+    if stormname and year: # optional keyword arguments
+        imatch = (df['NAME'] == stormname.upper()) & (df['SEASON'] == year)
+        assert imatch.sum(), (f"No {stormname} {year} in ibtracs {ifile}")
+        df = df[imatch]
 
     df = ibtracs_to_atcf(df)
     return df, ifile
@@ -199,7 +157,7 @@ def get_stormname_from_atcfname(atcf_filename, version="04r00_20200308"):
 def extension(stormname, season):
     from metpy.units import units # this is so slow. Only used here.
     # capitalize stormnames in extension dictionary
-    inkey = (stormname.upper(), int(season))
+    inkey = (stormname.upper(), season)
     # TODO: Grab last time, lat, lon from ibtracs, not hard coded values.
     # Need last entry from ibtracs to get speed and heading for all new members. speed_heading() needs position before.
     x = {("ISAAC",2012): # first element is last position from ibtracs, then tracked manually in 700mb wind in NARR
