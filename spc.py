@@ -498,7 +498,7 @@ def polarkde(originlon, originlat, storm_reports, ax, azbins, rbins, spc_td, ds=
         logging.debug("spc.polarkde(): storm reports DataFrame is empty. Returning None")
         return storm_rpts_kde
 
-    dist_from_origin, heading = gdist_bearing(originlon, originlat, storm_reports["slon"].values * units_degrees_E, storm_reports["slat"].values * units.degrees_N)
+    dist_from_origin, heading = gdist_bearing(originlon, originlat, storm_reports["slon"].values * units.degrees_E, storm_reports["slat"].values * units.degrees_N)
     storm_reports["range"] = dist_from_origin
     if normalize_range_by:
         storm_reports["range"] /= normalize_range_by
@@ -578,9 +578,8 @@ def polarplot(originlon, originlat, storm_reports, ax, zero_azimuth=0*units.deg,
     storm_reports["range"] = None
     storm_reports["heading"] = None
     if storm_reports.empty:
-        logging.debug("spc.polarplot(): storm reports DataFrame is empty.")
+        logging.info("spc.polarplot(): storm reports DataFrame is empty.")
         return storm_reports
-
 
     # Color, size, marker, and label of wind, hail, and tornado storm reports
     kwdict = symbol_dict(scale=scale)
@@ -597,7 +596,9 @@ def polarplot(originlon, originlat, storm_reports, ax, zero_azimuth=0*units.deg,
     rmax = ax.get_ylim()[1] * units.km
     inrange = storm_reports["range"].values * units.km  < rmax # have to use .values because units won't stick to pandas Series.
     storm_reports = storm_reports[inrange]
-    logging.debug(f"spc.polarplot(): found {inrange.sum()} reports inside axis range")
+    logging.debug(f"spc.polarplot(): {inrange.sum()} reports within {rmax} of TC center")
+    if storm_reports.empty:
+        return storm_reports
 
     ax.set_autoscale_on(False) # Don't rescale the axes with far-away reports (thought unneeded after filtering out pts beyond rmax, but symbol near maximum range autoscales axis to larger range.)
     for event_type, xrpts in storm_reports.groupby("event_type"):
@@ -618,17 +619,21 @@ def polarplot(originlon, originlat, storm_reports, ax, zero_azimuth=0*units.deg,
 
     return storm_reports
 
-def plot(storm_reports, ax, scale=1, drawrange=0, alpha=0.5, colorbyfreq=False):
+def plot(storm_reports, ax, scale=1, tissot=0, alpha=0.5, colorbyfreq=False, onecolor=None):
 
     storm_rpts_plots = {}
     if storm_reports.empty:
         # is this the right thing to return? what about empty list []? or rpts?
         logging.debug("spc.plot(): storm reports DataFrame is empty. Returning")
-        return storm_reports_plots
+        return storm_rpts_plots
 
     # Color, size, marker, and label of wind, hail, and tornado storm reports
     kwdict = symbol_dict(scale=scale)
 
+    if onecolor:
+        for k in kwdict:
+            kwdict[k]["c"] = [onecolor]
+        
     for event_type, xrpts in storm_reports.groupby("event_type"):
         logging.debug(f"plot {len(xrpts)} {event_type} reports")
         kwdict[event_type]["label"] += " (%d)" % len(xrpts)
@@ -648,14 +653,14 @@ def plot(storm_reports, ax, scale=1, drawrange=0, alpha=0.5, colorbyfreq=False):
             storm_rpts_plot = ax.scatter(lons, lats, alpha = alpha, **kwdict[event_type],
                     transform=cartopy.crs.PlateCarree()) # ValueError: Invalid transform: Spherical scatter is not supported with crs.Geodetic
         storm_rpts_plots[event_type] = storm_rpts_plot
-        if drawrange > 0:
+        if tissot > 0:
             logging.debug(f"about to draw tissot circles for {event_type}")
             # With lons and lats, specifying more than one dimension allows individual points to be drawn. 
             # Otherwise a grid of circles will be drawn.
             # It warns about using PlateCarree to approximate Geodetic. It still warps the circles
             # appropriately, so I think this is okay.
-            within_range = ax.tissot(rad_km = drawrange.to("km").magnitude, lons=lons[np.newaxis], lats=lats[np.newaxis], 
-                facecolor=kwdict[event_type]["c"], alpha=0.4, label=str(drawrange)+" range")
+            within_range = ax.tissot(rad_km = tissot.to("km").magnitude, lons=lons[np.newaxis], lats=lats[np.newaxis], 
+                facecolor=kwdict[event_type]["c"], alpha=0.4, label=str(tissot)+" range")
             # TODO: Legend does not support tissot cartopy.mpl.feature_artist.
             # A proxy artist may be used instead.
             # matplotlib.org/users/legend_guide.html#
