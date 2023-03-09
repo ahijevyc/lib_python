@@ -9,7 +9,6 @@ import s3fs
 import sys
 import xarray
 
-ftypes = ["event", "group", "flash"]
 ftype_dim = {"event":"number_of_events", "group":"number_of_groups", "flash":"number_of_flashes"}
 
 # path to save GLM files
@@ -21,15 +20,14 @@ def get_das(ds):
     # dictionary of DataArrays associated with each ftype
     das = {}
     coords = {}
-    for ftype in ftypes:
-        dim = ftype_dim[ftype]
+    for ftype, dim in ftype_dim.items():
         # list DataArrays with dim in them
         das[ftype] = [name for name in ds.data_vars if dim in ds[name].dims]
         # extend with list of coordinates with dim in them
         coords[ftype] = [name for name in ds.coords if dim in ds[name].dims]
     return das, coords
 
-def download(start, end, bucket="noaa-goes16", product="GLM-L2-LCFA", odir=GLMDIR, clobber=False, debug=False):
+def download(start, end, bucket="noaa-goes16", product="GLM-L2-LCFA", odir=GLMDIR, clobber=False):
     start = pd.to_datetime(start)
     end   = pd.to_datetime(end) # allow strings
     fs = s3fs.S3FileSystem(anon=True)
@@ -40,11 +38,10 @@ def download(start, end, bucket="noaa-goes16", product="GLM-L2-LCFA", odir=GLMDI
         logging.info(f"fs.ls({path})")
         files = fs.ls(path)
 
-        if len(files) == 0:
-            while len(fs.ls(path)) == 0:
-                logging.error(f"No files match {path}")
-                path = "/".join(path.split("/")[:-1]) # parent directory
-                logging.error(f"choices {fs.ls(path)}")
+        if files is None or len(files) == 0:
+            logging.error(f"No files match {path}")
+            path = "/".join(path.split("/")[:-1]) # parent directory
+            logging.error(f"choices {fs.ls(path)}")
             sys.exit(1)
 
         logging.debug(f"{len(files)} files {odir}")
@@ -67,7 +64,7 @@ def download(start, end, bucket="noaa-goes16", product="GLM-L2-LCFA", odir=GLMDI
     return ofiles
 
 def get_GLM_timestamp(GLMfile):
-    # extract timestamp string from filename
+    # extract s timestamp string from filename
     # https://docs.opendata.aws/noaa-goes16/cics-readme.html
     # <Filename> delineated by underscores ‘_’ and looks like this:
     # OR_ABI-L1b-RadF-M3C02_G16_s20171671145342_e20171671156109_c20171671156144.nc
@@ -81,7 +78,7 @@ def group_ids_in_flash(ds, flash_id):
     group_ids = ds['group_id'][group_parent_flash_ids == flash_id]
     return group_ids
 
-def flashOK(ds, debug=False):
+def flashOK(ds):
     # Input
     #   DataSet
     # Returns
@@ -111,7 +108,7 @@ def flashOK(ds, debug=False):
 
     return good
 
-def mask_bad_groups_and_flashes(ds, debug=False):
+def mask_bad_groups_and_flashes(ds):
     das, _ =  get_das(ds)
     #TODO: Find groups with just one event.
     logging.debug("group QC")
@@ -125,11 +122,11 @@ def mask_bad_groups_and_flashes(ds, debug=False):
 
     # Remove flashes with small number of events.
     logging.debug("flash QC")
-    ds[das["flash"]] = ds[das["flash"]].where(flashOK(ds, debug=debug))
+    ds[das["flash"]] = ds[das["flash"]].where(flashOK(ds))
     return ds
 
 
-def read(GLMfiles, qc=0, debug=False):
+def read(GLMfiles, qc=0):
     # Read and combine GLM datasets in GLMfiles.
     # Return combined xarray Dataset
 
@@ -177,7 +174,7 @@ def read(GLMfiles, qc=0, debug=False):
         
         # Mask bad groups and flashes
         if qc >= 2:
-            ds = mask_bad_groups_and_flashes(ds, debug=debug)
+            ds = mask_bad_groups_and_flashes(ds)
 
         for ftype in das.keys():
             # Drop masked data.
