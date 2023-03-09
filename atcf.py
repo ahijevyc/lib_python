@@ -576,7 +576,7 @@ def mean_track(df):
     df["model"] = "MEAN"
     return df
 
-def plot_track(ax, start_label,group,end_label, scale=1, label_interval_hours=1):
+def plot_track(ax, start_label,group,end_label, scale=1, label_interval_hours=1, onecolor=None):
     logging.debug(f"plot_track: {start_label} {group}")
     group = group.sort_values("valid_time")
 
@@ -612,7 +612,8 @@ def plot_track(ax, start_label,group,end_label, scale=1, label_interval_hours=1)
             # IF this is TC genesis track and not a storm with TC vitals
             # use "OTHER (NON TD)" instead of "CLASSIFIED TD" color
             color = "white"
-
+        if onecolor:
+            color = onecolor
         # Include middle point in line segments. Full segment is a bent line.
         lons = np.array([lon0,row.lon,lon1])
         lats = [lat0,row.lat,lat1]
@@ -624,7 +625,7 @@ def plot_track(ax, start_label,group,end_label, scale=1, label_interval_hours=1)
         logging.debug(f"{i} plot segment {lons} {lats}")
         
         segment = ax.plot(lons, lats, c=color, lw=lw*scale, transform=cartopy.crs.PlateCarree())
-        if row.valid_time.hour % label_interval_hours == 0: # label if hour is multiple of label_interval_hours
+        if label_interval_hours and row.valid_time.hour % label_interval_hours == 0: # label if hour is multiple of label_interval_hours
             lformat = "%-d"
             if row.valid_time.hour != 0:
                 lformat = "%-Hz"
