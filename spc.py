@@ -75,14 +75,17 @@ def RyanSobash(start=None, end=None, event_type="torn"):
 
     return sql_df, sobash_db # Yes, sobash_db is in the dbfile column of sql_df, but sql_df may have zero rows, so return sobash_db separately.
 
-def spc_lsr_filename(event_type, latestyear=2020):
+
+latestyear = (pd.Timestamp.now(tz='UTC') - pd.Timedelta(600, unit="day")).year
+
+def spc_lsr_filename(event_type, latestyear=latestyear):
     assert event_type in ["wind","hail","torn"]
     # Get wind, hail, or tornado local storm reports (LSR). If LSR do not exist locally, download from SPC.
     # Cache in TMPDIR, which by default is /glade/scratch/$USER/temp/.
 
     # Input
     # event_type: "wind", "hail", or "torn"
-    # latestyear: most recent (4-digit) year in SPC dataset. Part of SPC filename. Update when SPC releases new year.
+    # latestyear: most recent year in SPC dataset. Part of SPC filename. Update when SPC releases new year.
 
     import urllib.request
     idir = os.getenv("TMPDIR", "/glade/scratch/"+os.getenv("USER")+"/temp")
@@ -104,7 +107,7 @@ def spc_lsr_filename(event_type, latestyear=2020):
 
 
 def get_storm_reports( start = datetime.datetime(2016,6,10,tzinfo=pytz.UTC), end = datetime.datetime(2016,7, 1,tzinfo=pytz.UTC), 
-        event_types = ["torn", "wind", "hail"], latestyear = 2020, combine_sig= False, RyanSobashSanityCheck=False):
+        event_types = ["torn", "wind", "hail"], combine_sig= False, RyanSobashSanityCheck=False):
 
     # Return a DataFrame with local storm reports (LSRs) downloaded from SPC.
     # Choices are tornado, hail, and/or wind.
@@ -114,7 +117,6 @@ def get_storm_reports( start = datetime.datetime(2016,6,10,tzinfo=pytz.UTC), end
     #   start - start of time window, includes start. timezone aware datetime
     #   end   - end of time window, includes end. timezone aware datetime
     #   event_types - list of event types
-    #   latestyear - most recent year in SPC file. 4-digit year
     # OUTPUT
     #   rpts - DataFrame with time, location, and description of event (LSR)
 
@@ -126,13 +128,11 @@ def get_storm_reports( start = datetime.datetime(2016,6,10,tzinfo=pytz.UTC), end
     all_rpts = pd.DataFrame()
     for event_type in event_types:
         # Locate data file and nominal last time in data file.
-        rpts_file, nominal_last_time = spc_lsr_filename(event_type, latestyear=latestyear)
+        rpts_file, nominal_last_time = spc_lsr_filename(event_type)
 
         # Make sure the requested last time isn't later than the nominal last time.
-        if end > nominal_last_time:
-            logging.error(f"spc.get_storm_reports({event_type}): requested end time {end} is later than nominal last time in {rpts_file} {nominal_last_time}")
-            logging.error(f"Do you need to download a new {event_type} database from SPC?")
-            sys.exit(1)
+        assert end <= nominal_last_time, (f"spc.get_storm_reports({event_type}): requested end time {end} is later than "
+            "nominal last time in {rpts_file} {nominal_last_time}\nDo you need to download a new {event_type} database from SPC?")
 
         # csv format described in http://www.spc.noaa.gov/wcm/data/SPC_severe_database_description.pdf
         # SPC storm report files downloaded from http://www.spc.noaa.gov/wcm/#data to 
@@ -173,8 +173,9 @@ def get_storm_reports( start = datetime.datetime(2016,6,10,tzinfo=pytz.UTC), end
 
         # Unify "date" and "time" to make a naive datetime object (datetime with no timezone information).
         # The unified column is called "date_time".
+        logging.debug(f"read_csv {rpts_file}")
         rpts = pd.read_csv(rpts_file, parse_dates=[['date','time']], dtype=dtype, infer_datetime_format=True)
-        logging.debug(f"input file: {rpts_file}. read {len(rpts)} lines")
+        logging.debug(f"read {len(rpts)} lines")
 
         rpts["event_type"] = event_type
         rpts["source"] = rpts_file # Used to take basename of this. But why dispose dirname information?
