@@ -1,5 +1,6 @@
 import argparse
 import atcf
+import cartopy.geodesic
 from collections import defaultdict
 from datetime import datetime, timedelta
 import logging
@@ -17,7 +18,7 @@ import sys
 idir = '/glade/work/ahijevyc/share/ibtracs/'
 
 
-def get_atcfname_from_stormname_year(stormname, year, version="04r00_20200308"):
+def get_atcfname_from_stormname_year(stormname, year, version="04r00_20230314"):
     justname = stormname.upper()
     ifile = idir + "IBTrACS_SerialNumber_NameMapping_v"+version+".txt"
     logging.debug(f"ibtracs.get_atcfname_from_stormname_year(): searching for {stormname} {year} in {ifile}")
@@ -63,7 +64,7 @@ def ibtracs_to_atcf(df):
     # Fill in nan vmax from WMO_WIND with USA_WIND
     df["vmax"] = df["vmax"].fillna(df["USA_WIND"])
 
-    df["valid_time"]   = pd.to_datetime(df["valid_time"])
+    df["valid_time"]   = pd.to_datetime(df["valid_time"], utc=True)
     df["initial_time"] = df["valid_time"]
     df["cy"]           = df["cy"].astype(str) # cy is not always an integer (e.g. 10E)
     df["technum"]      = np.nan
@@ -125,7 +126,9 @@ def get_df(stormname=None, year=None, version="04r00", basin="ALL"):
         assert imatch.sum(), (f"No {stormname} {year} in ibtracs {ifile}")
         df = df[imatch]
 
+    df = extension(df)
     df = ibtracs_to_atcf(df)
+
     return df, ifile
 
 def this_storm(df, stormname, year):
@@ -150,39 +153,42 @@ def get_stormname_from_atcfname(atcf_filename, version="04r00_20200308"):
             logging.debug(f"{year} {bname}")
             assert year == bname[5:9]
             return stormname + " " + year
-    if not stormname:
-        logging.error(f"ibtracs.get_stormname_from_atcfname(): no {bname} in {ifile}")
-        sys.exit(1)
+    assert stormname, f"ibtracs.get_stormname_from_atcfname(): no {bname} in {ifile}"
 
-def extension(stormname, season):
-    from metpy.units import units # this is so slow. Only used here.
-    # capitalize stormnames in extension dictionary
-    inkey = (stormname.upper(), season)
-    # TODO: Grab last time, lat, lon from ibtracs, not hard coded values.
-    # Need last entry from ibtracs to get speed and heading for all new members. speed_heading() needs position before.
-    x = {("ISAAC",2012): # first element is last position from ibtracs, then tracked manually in 700mb wind in NARR
-            {"valid_time": [pd.to_datetime(x) for x in ["20120901T06", "20120901T12", "20120901T15", "20120901T18", "20120901T21",
-                                                  "20120902T00", "20120902T03", "20120902T06", "20120902T09"]],
-             "lat"     : [ 38.4,  38.5,  38.7,  38.7,  38.6,  39.1,  38.7,  38.5,  38.9] * units.degree_N,
-             "lon"     : [-93.3, -93.6, -93.1, -93.0, -92.0, -91.7, -90.9, -90.6, -89.7] * units.degree_E,
-             "storm_size_S" : 1.0, # Does this make sense as a fill-in value? for Vt500km, it does
-            }
-        }
+def extension(df):
 
-    if inkey in x:
-        x[inkey]["stormname"] = stormname.upper()
-        x[inkey]["SEASON"] = season
-        speed, heading = atcf.speed_heading(x[inkey]["lon"], x[inkey]["lat"], x[inkey]["valid_time"])
-        x[inkey]["speed"], x[inkey]["heading"] = speed, heading
-        # throw away first element -- it was only needed to get speed and heading for 1st element of extension
-        for c in ["valid_time", "lat", "lon", "speed", "heading"]:
-            x[inkey][c] = x[inkey][c][1:]
-        x[inkey]["rad"] = 0. # needed for check later where lines with rad > 35 are dropped.
-        x = x[inkey]
-    else:
-        x = None
+    logging.info("use last line of ISAAC 2012 as template for extension")
+    template = df[(df.SEASON == 2012) & (df.NAME == "ISAAC")].iloc[-1]
+    # tracked manually in 700mb wind in NARR
+    times = ["20120901T12", "20120901T15", "20120901T18", "20120901T21", "20120902T00", "20120902T03", "20120902T06", "20120902T09"]
+    lats = [ 38.5,  38.7,  38.7,  38.6,  39.1,  38.7,  38.5,  38.9]
+    lons = [-93.6, -93.1, -93.0, -92.0, -91.7, -90.9, -90.6, -89.7]
+ 
+    newrows = [template]
+    for time, lat, lon in zip(times, lats, lons):
+        new = template.copy()
+        new[["ISO_TIME","LAT","LON"]] = time, lat, lon
+        newrows.append(new)
 
-    return pd.DataFrame(x)
+    # Fix new speed and headings. They were simply copied from last row of ISAAC
+    newdf = pd.DataFrame(newrows)
+    points = np.column_stack((newdf.LON,newdf.LAT))
+    geo = cartopy.geodesic.Geodesic()
+    n3 = geo.inverse(points[:-1], points[1:]) #returns np.ndarray shape=(n, 3) - dist in m, and forward azimuths of start and end pts.
+    dist = n3[:,0]
+    heading = n3[:,1] # forward azimuth of start points
+    times = pd.to_datetime(newdf.ISO_TIME)
+    dt = np.diff(times) / np.timedelta64(1,'s') # convert to seconds
+    speed = dist/dt
+    newdf = newdf.iloc[1:] # drop first row of new DataFrame. It was last row of ISAAC.
+    # Convert to knots per https://www.ncei.noaa.gov/sites/default/files/2021-07/IBTrACS_v04_column_documentation.pdf
+    newdf["STORM_SPEED"] = speed * 1.94384 # replace speeds with proper values. 
+    newdf["STORM_DIR"] = heading # same with heading
+
+    # Concatenate new rows to end of DataFrame. 
+    # ignore_index=True, or else index from last line of ISAAC will appear multiple times and confuse ibtracs_to_atcf().
+    df = pd.concat([df, newdf], axis="index", ignore_index=True)
+    return df
 
 def main():
     parser = argparse.ArgumentParser()
