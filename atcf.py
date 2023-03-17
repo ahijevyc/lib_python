@@ -576,7 +576,8 @@ def mean_track(df):
     df["model"] = "MEAN"
     return df
 
-def plot_track(ax, start_label,group,end_label, scale=1, label_interval_hours=1, onecolor=None):
+def plot_track(ax, start_label,group,end_label, scale=1, dailydot=False, 
+        label_interval_hours=1, onecolor=None, linestyle="solid"):
     logging.debug(f"plot_track: {start_label} {group}")
     group = group.sort_values("valid_time")
 
@@ -624,14 +625,14 @@ def plot_track(ax, start_label,group,end_label, scale=1, label_interval_hours=1,
             lons[lons < 0] += 360
         logging.debug(f"{i} plot segment {lons} {lats}")
         
-        segment = ax.plot(lons, lats, c=color, lw=lw*scale, transform=cartopy.crs.PlateCarree())
+        segment = ax.plot(lons, lats, c=color, lw=lw*scale, transform=cartopy.crs.PlateCarree(), linestyle=linestyle)
         if label_interval_hours and row.valid_time.hour % label_interval_hours == 0: # label if hour is multiple of label_interval_hours
             lformat = "%-d"
             if row.valid_time.hour != 0:
                 lformat = "%-Hz"
             ax.text(row.lon, row.lat, row.valid_time.strftime(lformat), color=contrasting_color(color), clip_box=ax.bbox, clip_on=True, 
                 ha='center',va='center_baseline',fontsize=6*scale, transform=cartopy.crs.PlateCarree())
-        markersize = scale*8 if row.valid_time.hour == 0 else 0.
+        markersize = scale*8 if row.valid_time.hour == 0 and dailydot else 0.
         ax.plot(row.lon, row.lat, 'o', markersize=markersize, markerfacecolor=color, markeredgewidth=0.0, color=color, transform=cartopy.crs.PlateCarree())
     label = "track label description"
     already_annotated = label in [x.get_label() for x in ax.texts]
@@ -643,7 +644,7 @@ def TClegend(ax):
     # legend was screen-grabbed from tropicalatlantic.com
     img = plt.imread('/glade/work/ahijevyc/share/TClegend.png')
     xmin, dx = 0, 1
-    ymin = ax.get_position().ymin/2 # halfway between bottom of axes and bottom of figure
+    ymin = 0.01
     hgt, wid, _ = img.shape
     dy = dx*hgt/wid
     legax = ax.figure.add_axes([xmin, ymin, dx, dy])
@@ -991,6 +992,17 @@ def lon2s(lon):
 #   1) distance (pint quantity with units km)
 #   2) initial bearing from 1st pt (lon1, lat1) to an array of other points (lons, lats). (also pint quantity)
 def dist_bearing(lon1,lat1,lons,lats,Rearth=Rearth):
+
+    geo = cartopy.geodesic.Geodesic(radius=Rearth.to('meter').m)
+    lons = [x.m for x in lons]
+    lats = [x.m for x in lats]
+    n3 = geo.inverse((lon1.m, lat1.m), np.stack([lons, lats], axis=-1))
+    dist = n3[:,0] * units.m
+    bearing = n3[:,1] * units.deg
+    return dist, bearing
+
+
+    # MAYBE DELETE EVERYTHING BELOW IN THIS FUNCTION
     assert lat1 <=  90*deg, f"lat1 {lat1} >  90deg"
     assert lat1 >= -90*deg, f"lat1 {lat1} < -90deg"
     # TODO: allow scalar lons, lats
@@ -1019,9 +1031,7 @@ def dist_bearing(lon1,lat1,lons,lats,Rearth=Rearth):
     # -180 - 180 -> 0 - 360
     bearing = (bearing + 360*deg) % (360*deg) # parentheses around 360*deg are important
     
-    if (np.fabs(arg) > 1).any():
-        logging.error(f"atcf.dist_bearing(): arg={arg}")
-        pdb.set_trace()
+    assert (np.fabs(arg) <= 1).all(), f"atcf.dist_bearing(): arg={arg}"
     
     distance_from_center = np.arccos(arg)*Rearth
     # Treating DataArrays and pint arrays separately sure is getting kludgy.
