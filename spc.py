@@ -22,11 +22,8 @@ import xarray
 
 def getTCTOR(rename=True):
     # Tropical Cyclone Tornado (TCTOR) database from Roger Edwards (SPC)
-    ifile = "/glade/work/ahijevyc/share/SPC/TCTor95-18.xls - Full List.csv"
-    REdf = pd.read_csv(ifile, delimiter=',', parse_dates=[["Year","UTC-Mo.","UTC-Date","UTC time"]], 
-            index_col=0, skiprows=1, header=[0], nrows=1506) # skipfooter=23)
-    # skipfooter=23 could be used, but 'c' engine doesn't handle it. 'c' engine is faster than 'python' engine.
-    REdf = REdf.tz_localize(tz='UTC')
+    ifile = "/glade/work/ahijevyc/share/SPC/tctor2021.FullList.csv"
+    REdf = pd.read_csv(ifile, delimiter=',', parse_dates=[["Year","UTC-Mo.","UTC-Date","UTC time"]])
 
     if rename:
         REdf.index.set_names('datetime', inplace=True)
@@ -48,7 +45,7 @@ def getTCTOR(rename=True):
     cat_type = CategoricalDtype(categories=["N","TD","TS","H","MH"], ordered=True)
     REdf["TC Cat"] = REdf["TC Cat"].astype(cat_type)
 
-
+    REdf["time"] = pd.to_datetime(REdf["Year_UTC-Mo._UTC-Date_UTC time"], utc=True)
     return REdf
 
 
@@ -514,14 +511,15 @@ def polarkde(originlon, originlat, storm_reports, ax, azbins, rbins, spc_td, ds=
     storm_reports = storm_reports.copy() # Avoid SettingWithCopyWarning
     for event_type, xrpts in combine_significant(storm_reports).groupby("event_type"):    
         logging.debug(f"spc.polarkdeplot(): found {len(xrpts)} {event_type} reports")
-        if len(xrpts) < 3:
-            logging.warning(f"not enough pts for {event_type} kdeplot")
+        n_unique_locs = len(xrpts.drop_duplicates(subset=["slon","slat"])) # count non-duplicate locations (Opal 1995100415 has only 2)
+        n = len(xrpts)
+        if n_unique_locs < 3:
+            logging.warning(f"not enough unique locations ({n_unique_locs}) for {event_type} kdeplot")
             continue
 
         # convert to Cartesian and apply Gaussian kde
         rptx = xrpts["range"] * np.cos(np.radians(xrpts["heading"]))
         rpty = xrpts["range"] * np.sin(np.radians(xrpts["heading"]))
-        n = len(xrpts)
         X, Y = np.mgrid[-rmax:rmax+ds:ds, -rmax:rmax+ds:ds] 
         bearing = pd.DataFrame(np.degrees(np.arctan2(Y,X))) # Make DataFrame because histogram2d_weighted expects a .values attribute
         bearing[bearing < 0] = bearing[bearing < 0] + 360 # azbins is 0-360 but bearing was -180 to +180
@@ -543,7 +541,7 @@ def polarkde(originlon, originlat, storm_reports, ax, azbins, rbins, spc_td, ds=
         polarc = pkde.plot.contour(x="azimuth",y="range", ax=ax, colors=colors, linewidths=0.5, levels=kdelevels[event_type],
                 add_colorbar=add_colorbar, cbar_kwargs={"shrink":0.5,"pad":0.09} if add_colorbar else None)
 
-        cb = None
+        cb = None # TODO: maybe delete?
         if add_colorbar:
             cb = polarc.colorbar
             cb.formatter.set_powerlimits((-2,2))

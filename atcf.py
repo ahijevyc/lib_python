@@ -593,13 +593,13 @@ def plot_track(ax, start_label,group,end_label, scale=1, dailydot=False,
             else:
                 row1 = group.iloc[i+1]
             ax.text(row.lon,row.lat, start_label, clip_box=ax.bbox, clip_on=True, 
-                    ha='center', va='center', fontsize=7*scale, transform=cartopy.crs.PlateCarree())
+                    ha='center', va='center', fontsize=9*scale, transform=cartopy.crs.PlateCarree())
         elif i == len(group)-1:
             # last half-segment
             row_1 = group.iloc[i-1]
             row1 = group.iloc[i]
             ax.text(row.lon, row.lat, end_label, clip_box=ax.bbox, clip_on=True,
-                    ha='center', va='center', fontsize=7*scale, transform=cartopy.crs.PlateCarree())
+                    ha='center', va='center', fontsize=8*scale, transform=cartopy.crs.PlateCarree())
         else:
             # middle segments
             row_1 = group.iloc[i-1]
@@ -993,19 +993,22 @@ def lon2s(lon):
 #   2) initial bearing from 1st pt (lon1, lat1) to an array of other points (lons, lats). (also pint quantity)
 def dist_bearing(lon1,lat1,lons,lats,Rearth=Rearth):
 
-    geo = cartopy.geodesic.Geodesic(radius=Rearth.to('meter').m)
-    lons = [x.m for x in lons]
-    lats = [x.m for x in lats]
-    n3 = geo.inverse((lon1.m, lat1.m), np.stack([lons, lats], axis=-1))
-    dist = n3[:,0] * units.m
-    bearing = n3[:,1] * units.deg
-    return dist, bearing
+    if False:
+        # TODO: get array shapes working, and xarray handling
+        geo = cartopy.geodesic.Geodesic(radius=Rearth.to('meter').m)
+        lons = [x.m for x in lons]
+        lats = [x.m for x in lats]
+        n3 = geo.inverse((lon1.m, lat1.m), np.stack([lons, lats], axis=-1))
+        dist = n3[:,0] * units.m
+        bearing = n3[:,1] * units.deg
+        return dist, bearing
 
 
     # MAYBE DELETE EVERYTHING BELOW IN THIS FUNCTION
     assert lat1 <=  90*deg, f"lat1 {lat1} >  90deg"
     assert lat1 >= -90*deg, f"lat1 {lat1} < -90deg"
-    # TODO: allow scalar lons, lats
+    # TODO: allow scalar lons, lats and xarrays
+    #lons, lats = np.atleast_1d(lons, lats)
     assert lats.max() <  90, "lats element > 90"
     assert lats.min() > -90, "lats element < -90"
     if hasattr(lons, 'metpy'):

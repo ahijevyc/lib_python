@@ -32,6 +32,49 @@ def get_atcfname_from_stormname_year(stormname, year, version="04r00_20230314"):
         logging.error(f"ibtracs.get_atcfname_from_stormame_year(): no {stormname} {year} in {ifile}")
         sys.exit(1)
 
+def getExt(stormname,year,trackdf, narrtimes):
+    etxt = f"../inland_tc_position_dat/{stormname.capitalize()}.{year}.txt"
+    if not os.path.exists(etxt):
+        logging.error(f"{etxt} not found")
+        return trackdf
+    trackdf = trackdf.set_index("valid_time")
+    # first 3-hrly time after track ends (out-of-bounds). add 1 second to ensure it is greater than last track time.
+    first_oob_narrtime = (trackdf.index.max()+pd.Timedelta(1,unit='s')).ceil(freq="3H")
+    logging.warning(f"first out-of-bounds narrtime is {first_oob_narrtime}")
+    extend = index=pd.date_range(start=first_oob_narrtime, 
+        end=narrtimes[-1], freq='3H', tz="UTC", name="valid_time")
+    logging.warning(f"concatenate empty rows for times {extend.min()}-{extend.max()}")
+    trackdf = pd.concat([trackdf, pd.DataFrame(index=extend)], axis="index")
+    # combine Roger's locations
+    logging.warning(f"opening {etxt} to get Roger's TC position at the time of tornado")
+    df = pd.read_csv(etxt, names=["valid_time", "lat", "lon"], delim_whitespace=True, date_parser=lambda x:pd.to_datetime(x,utc=True),
+            parse_dates=["valid_time"], index_col=0)
+    logging.warning(f"combine {len(df)} TC locations at torn times")
+    trackdf = trackdf.combine_first(df).sort_index()
+    logging.warning(f"interpolate and forward fill missing times")
+    trackdf["lat"] = trackdf["lat"].interpolate() # forward-fill last position
+    trackdf["lon"] = trackdf["lon"].interpolate()
+
+    # Fill in speed and heading also.
+    points = np.column_stack((trackdf.lon,trackdf.lat))
+    geo = cartopy.geodesic.Geodesic()
+    n3 = geo.inverse(points[:-1], points[1:]) #returns np.ndarray shape=(n, 3) - dist in m, and forward azimuths of start and end pts.
+    dist = n3[:,0]
+    heading = n3[:,1] # forward azimuth of start points
+    heading[heading<0] += 360
+    times = trackdf.index.values
+    dt = np.diff(times) / np.timedelta64(1,'s') # convert to seconds
+    speed = dist/dt
+    # Convert to knots per https://www.ncei.noaa.gov/sites/default/files/2021-07/IBTrACS_v04_column_documentation.pdf
+    speed = speed * 1.94384 # m/s to knots
+    speed = pd.Series(speed, index=trackdf.index[1:]) # speed and heading one element smaller than input (like np.diff() output)
+    heading = pd.Series(heading, index=trackdf.index[1:])
+    trackdf["speed"].update(speed)
+    trackdf["heading"].update(heading)
+    trackdf = trackdf.reset_index()
+    trackdf = trackdf[trackdf.valid_time.isin(narrtimes)]
+    return trackdf
+
 def ibtracs_to_atcf(df):
 
     columns = {
@@ -100,8 +143,13 @@ def get_df(stormname=None, year=None, version="04r00", basin="ALL"):
 
     dtype = {
             'DS824_STAGE': str,
+            'HKO_CAT': str,
             'MLC_CLASS': str,
+            'NEWDELHI_GRADE': str,
+            'NEUMANN_CLASS': str,
             'USA_RECORD': str, 
+            'USA_ATCF_ID': str, 
+            'WMO_AGENCY': str, 
             }
 
     region = basin.upper()
@@ -117,8 +165,9 @@ def get_df(stormname=None, year=None, version="04r00", basin="ALL"):
         myfile = requests.get(url)
         open(ifile, "wb").write(myfile.content)
     # keep_default_na=False . we don't want "NA" or North Atlantic to be treated as NA/NaN.
-    # Skip row 1 (units)
-    df = pd.read_csv(ifile, header=[0], skiprows=[1], na_values=[' '], keep_default_na=False, dtype=dtype)
+    # Skip row 1 (contains units)
+    df = pd.read_csv(ifile, skiprows=[1], na_values=[' '], keep_default_na=False, 
+            engine="c", dtype=dtype)
     logging.debug(f"ibtracs.get_atcf(): read {len(df)} lines from {ifile}")
 
     if stormname and year: # optional keyword arguments
@@ -126,7 +175,7 @@ def get_df(stormname=None, year=None, version="04r00", basin="ALL"):
         assert imatch.sum(), (f"No {stormname} {year} in ibtracs {ifile}")
         df = df[imatch]
 
-    df = extension(df)
+    #df = extension(df)
     df = ibtracs_to_atcf(df)
 
     return df, ifile
@@ -182,7 +231,7 @@ def extension(df):
     speed = dist/dt
     newdf = newdf.iloc[1:] # drop first row of new DataFrame. It was last row of ISAAC.
     # Convert to knots per https://www.ncei.noaa.gov/sites/default/files/2021-07/IBTrACS_v04_column_documentation.pdf
-    newdf["STORM_SPEED"] = speed * 1.94384 # replace speeds with proper values. 
+    newdf["STORM_SPEED"] = speed * 1.94384 # m/s to knots
     newdf["STORM_DIR"] = heading # same with heading
 
     # Concatenate new rows to end of DataFrame. 

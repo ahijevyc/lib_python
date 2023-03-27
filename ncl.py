@@ -10,6 +10,7 @@ def steering_flow(args = dict(stormname="Joaquin", storm_heading=45*units("degre
     force_new=False, fhr=000, rx=4.5*units("degrees"), pbot=850*units("hPa"), ptop=200*units("hPa"), 
     file_ncl="/glade/scratch/ahijevyc/NARR/merged_AWIP32.2015100300.3D", ensmember="JOAQUIN2015", nc_output=False), **kwargs):
 
+    assert not pd.isnull(kwargs["storm_speed"]), "ncl.steering_flow: missing storm_speed"
     # Ensure correct units for unit-unaware NCL script
     kwargs["storm_speed"] = kwargs["storm_speed"].to("m/s").m
     kwargs["lat0"] = kwargs["lat0"].to("degrees_N").m
@@ -23,9 +24,6 @@ def steering_flow(args = dict(stormname="Joaquin", storm_heading=45*units("degre
     # Replace default keyword arguments with provided ones (in kwargs dictionary). 
     args.update(kwargs)
     arglist = ["ncl", "-Q"] # -Q Turn off echo of NCL version and copyright info
-    # TODO: does this hijack logger?
-    #if logging.getLogger().level == logging.DEBUG:
-    #    arglist.remove("-Q")
 
     # Put args into strings suitable for ncl command line.
     for k in args:
