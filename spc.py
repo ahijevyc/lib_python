@@ -1,6 +1,7 @@
 import cartopy
 import cartopy.geodesic
 import datetime
+import geopandas
 import glob # used to locate stormEvents files 
 import logging
 import matplotlib.pyplot as plt
@@ -9,6 +10,7 @@ import numpy as np
 import os # for basename
 import pandas as pd
 from   pandas.api.types import CategoricalDtype
+from pathlib import Path
 import pdb
 import pytz # Time zone-aware datetimes
 import requests # for stormEvents()
@@ -764,3 +766,98 @@ def events2met(df):
     df["Observation_Value"] = df.TOR_F_SCALE
     print(df.to_string(columns=met_columns))
 
+def get_outlooks(idir = Path(os.getenv('TMPDIR'))):
+    """
+    SPC outlooks already downloaded from Iowa Environmental Mesonet
+    https://mesonet.agron.iastate.edu/request/gis/spc_outlooks.phtml
+    """
+    agdf = [geopandas.read_file(idir/ x) for x in [
+        "outlooks_201801010000_202101010000",
+        "outlooks_202101010000_202201010000",
+        "outlooks_202201010000_202211280000",
+    ]]
+    agdf = pd.concat(agdf)
+    return agdf
+
+# color map for SPC outlook
+convective_outlook_colors = { "TSTM": 'palegreen',
+                              "MRGL": 'green',
+                              "SLGT": 'yellow',
+                              "ENH" : 'goldenrod',
+                              "MDT" : 'red',
+                              "HIGH": 'magenta'}
+# color map for SPC enhanced tstm outlook
+enhtstm_colors = {10: '#803E22',
+                  40: '#75FFFF',
+                  70: '#FF0000'}
+
+def get_issuance_time(zipfilename: str):
+    """
+    Input
+    zipfilename: SPC enhanced thunderstorm outlook filename
+    Extract substrings from zipfilename:
+      -  issuance timestamp (prodiss)
+      -  valid start hour
+      -  valid end hour
+      -  valid_start_day
+    Assert valid_start, valid_end and issuance time string are consistent
+    and expected.
+    Return
+    4-character issuance time string, valid_start, valid_end
+    """
+    z = os.path.basename(zipfilename)
+    # datetime.datetime.strptime 8x faster than pd.to_datetime
+    prodiss = datetime.datetime.strptime(z[-20:-8], '%Y%m%d%H%M')
+    valid_start_hour = int(z[17:19])
+    valid_end_hour = int(z[3:5])
+    valid = (valid_start_hour,valid_end_hour)
+    valid_start_day  = int(z[15:17])
+    idate = datetime.datetime.strptime(z[6:14], '%Y%m%d')
+    valid_same_day = idate.day == valid_start_day
+    d = 0 if valid_same_day else 1
+    valid_start = idate + datetime.timedelta(hours=valid_start_hour) + datetime.timedelta(days=d)
+    if valid_end_hour < valid_start_hour:
+        d = d+1
+    valid_end   = idate + datetime.timedelta(hours=valid_end_hour) + datetime.timedelta(days=d)
+    assert valid_start < valid_end, f"valid start {valid_start} before valid end {valid_end}"
+    if valid == (4,12):
+        if valid_same_day:
+            issue = "0130"
+        else:
+            if prodiss < idate + datetime.timedelta(hours=17):
+                issue = "1700"
+            else:
+                issue = "2100"
+    elif valid == (0,4):
+        assert not valid_same_day
+        if prodiss < idate + datetime.timedelta(hours=6):
+            issue = "0600"
+        elif prodiss < idate + datetime.timedelta(hours=13):
+            issue = "1300"  
+        elif prodiss < idate + datetime.timedelta(hours=17):
+            issue = "1700"
+        else:
+            issue = "2100"  
+    elif valid == (20,0):
+        assert valid_same_day
+        if prodiss < idate + datetime.timedelta(hours=6):
+            issue = "0600"
+        elif prodiss < idate + datetime.timedelta(hours=13):
+            issue = "1300"  
+        else:
+            issue = "1700"
+    elif valid == (16,20):
+        assert valid_same_day
+        if prodiss < idate + datetime.timedelta(hours=6):
+            issue = "0600"
+        else:
+            issue = "1300"  
+    elif valid == (12,16):
+        assert valid_same_day
+        issue = "0600"
+    else:
+        logging.error(f"unexpected valid range {valid}")
+
+    assert issue in ["0600","1300","1700","2100","0130"]
+        
+    return issue, valid_start, valid_end

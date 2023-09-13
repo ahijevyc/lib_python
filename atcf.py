@@ -16,7 +16,9 @@ import pandas as pd
 import pdb
 import re
 from scipy.stats import circmean # for averaging longitudes
-#from stormevents.nhc import nhc_storms, VortexTrack
+import spc
+from stormevents.nhc import nhc_storms, VortexTrack
+import warnings
 import xarray
 
 basin_bounds = {
@@ -30,7 +32,6 @@ basin_bounds = {
         "io": (30,109,0,28),
         "wp": (99,180,0,38),
         "global": (-179.999,180,-20,70), # changed -180 to 179.999 to avoid UserWarning: Attempting to set identical left == right == 179.99999999999932 results in singular transformations
-        "track" : None # plot domain is simply the storm track
         }
 
 
@@ -47,11 +48,13 @@ Rearth = metpy.constants.earth_avg_radius
 
 
 # colors from tropicalatlantic.com
-#                               TD         TD            TS           CAT1          CAT2          CAT3         CAT4         CAT5
-#     index                      0          1             2             3             4             5            6            7
-colors = ['white',(.01,.77,.18),(1.0,1.0,.65),(1.0,.85,.85),(1.0,.67,.67),(1.0,.45,.46),(1,.24,.24),(.85,.16,.17)]
+#           TD         TD            TS           CAT1          CAT2          CAT3         CAT4         CAT5
+#   index    0          1             2             3             4             5            6            7
+colors = ['white',(.01,.77,.18),(1.0,1.0,.65),(1.0,.85,.85),(1.0,.67,.67),(1.0,.45,.46),(1,.24,.24),(0.85,.16,.17)]
 # personal colors
-colors = ['white',(.00,.61,.76),(.45,.75,.29),(.97,.94,.53),(.99,.75,.15),(.95,.46,.20),(1,.07,.07),(1.0,.09,.74)]
+colors = ['white',(.00,.61,.76),(.45,.75,.29),(.97,.94,.53),(.99,.75,.15),(.95,.46,.20),(1,.07,.07),(1.00,.09,.74)]
+# more purple, yellow
+colors = [(1,1,1),(.10,.66,.85),(.50,.80,.34),(.97,.94,.25),(.99,.75,.05),(.95,.46,.20),(1,.07,.07),(0.77,.09,.77)]
 
 colors = {"NONTD": colors[0],
         "TD": colors[1],
@@ -62,8 +65,10 @@ colors = {"NONTD": colors[0],
         "CAT4": colors[6],
         "CAT5": colors[7]
         }
-idl_water_color = np.array([235.,234.,242.])/255.
 
+cmap = mcolors.ListedColormap(colors.values())
+
+idl_water_color = np.array([235.,234.,242.])/255.
 
 def contrasting_color(color):
     # color could be a size-3 tuple, or a string, like "white"
@@ -205,6 +210,12 @@ column_units.update(
             )
         )
 
+# Best tracks have different initial_times and fhr is always 0. 
+# To group best tracks with the same unique_list as for models, we will make change all best track 
+# initial_times to the first initial_time and make the best track fhr hold the time offset.
+unique_track = ["basin", "cy", "initial_time", "model"]
+
+
 class Atcf(pd.DataFrame):
     def __init__(self, x):
         super().__init__(x)
@@ -213,6 +224,10 @@ class Atcf(pd.DataFrame):
     def write(self, ofile, fullcircle=False, append=False):
         if self.empty:
             logging.warning("afcf.write(): DataFrame is empty.")
+
+        # Ensure wind radii thresholds are in ascending order
+        sanity_check = self.sort_values(["basin","cy","initial_time","fhr","rad"])
+        assert self.equals(sanity_check), "wind radii thresholds not in ascending order"
 
         models = self["model"].unique()
 
@@ -297,22 +312,17 @@ class Atcf(pd.DataFrame):
             f.close()
 
             if append:
-                logging.info(f"appended {models} to {ofile}")
+                logging.info(f"appended {len(models)} models to {ofile}")
             else:
-                logging.info(f"wrote {models} as {ofile}")
-
-
-# Best tracks have different initial_times and fhr is always 0. 
-# To group best tracks with the same unique_list as for models, we will make change all best track 
-# initial_times to the first initial_time and make the best track fhr hold the time offset.
-unique_track = ["basin", "cy", "initial_time", "model"]
+                logging.info(f"wrote {len(models)} models as {ofile}")
 
 
 def new_besttrack_times(best_track):
     if "technum" in best_track and best_track.technum.any():
+        logging.info("add minutes from TECHNUM")
         # add minutes for BEST tracks. 2-digit minutes are in the TECHNUM column for BEST tracks. 
         # TECHNUM means something else for non-BEST tracks and shouldn't be added like a timedelta.
-        extra_minutes = pd.to_timedelta(best_track.technum.fillna(0), unit='minute')
+        extra_minutes = pd.to_timedelta(best_track.technum.fillna(0).replace('',0).astype(int), unit="minutes")
         best_track['initial_time'] +=  extra_minutes
         best_track['valid_time']   +=  extra_minutes
         # Set technum to zero so this operation is not applied again.
@@ -338,9 +348,7 @@ def write(ofile, df, **kwargs):
     Atcf(df).write(ofile, **kwargs)
 
 
-def get_ax(projection=cartopy.crs.PlateCarree(), bscale='50m'):
-    fig = plt.figure()
-    ax = plt.axes(projection=projection) 
+def decorate_ax(ax, bscale='50m'):
     # bscale = countries and ocean the same border scale to match
     # Create a feature countries from Natural Earth
     countries = cartopy.feature.NaturalEarthFeature(category='cultural',
@@ -354,11 +362,10 @@ def get_ax(projection=cartopy.crs.PlateCarree(), bscale='50m'):
     ax.add_feature(ocean) 
     ax.add_feature(countries, edgecolor='gray', lw=0.375)
     ax.add_feature(cartopy.feature.LAKES, facecolor=idl_water_color)
-    ax.add_feature(cartopy.feature.STATES, lw=0.25, edgecolor='gray')
-    gl = ax.gridlines(crs=projection, draw_labels=True, color="white", linestyle='--', alpha=0.75)
+    ax.add_feature(cartopy.feature.STATES.with_scale(bscale), lw=0.25, edgecolor='gray')
+    gl = ax.gridlines(crs=cartopy.crs.PlateCarree(), draw_labels=True, 
+            x_inline=False, color="white", linestyle='--', alpha=0.75)
     gl.xformatter = LONGITUDE_FORMATTER
-    # draw longitude line every n degrees.  Default xlocator is 30 deg, which is too far apart. 
-    gl.xlocator = matplotlib.ticker.MultipleLocator(base=10.)
     gl.top_labels = False # Don't overwrite title
     gl.yformatter = LATITUDE_FORMATTER
         
@@ -381,13 +388,6 @@ def vmax2category(vmax):
         category = "TD"
 
     return category, colors[category]
-
-
-def vmax_HollandB_to_minp(vmax_kts, HollandB, environmental_pressure_hPa = 1013, density_of_air = 1.15*units.parse_expression("kg/m^3")):
-    vmax = vmax_kts * kt.to("m/s")
-    environmental_pressure = environmental_pressure_hPa* hPa.to("Pa")
-    minp = environmental_pressure - (vmax**2 * density_of_air * math.e / HollandB)
-    return np.around(minp / 100.)
 
 
 def iswarmcore(track, min_warmcore_percent=25):
@@ -489,7 +489,7 @@ def speed_heading(lon, lat, time):
     assert lon.units == degE, "atcf.speed_heading(): lon not deg E"
     assert lat.units == degN, "atcf.speed_heading(): lat not deg N"
     # return speed and heading from previous point to next point
-    speed = np.zeros_like(lon) * units.parse_expression("m/s")
+    speed = np.zeros_like(lon) * units.m / units.s
     bearing = np.zeros_like(lon) * deg
 
     nt = len(time)
@@ -516,17 +516,12 @@ def speed_heading(lon, lat, time):
     return speed, bearing
 
 def get_stormname(df):
-    # stormname column is blank prior to 2008-ish
-    stormname = df.stormname[df.vmax == df.vmax.max()]
-    stormname = stormname.iloc[0] # could be more than one match. take first one.
 
-    # Sometimes stormname column at time with highest vmax is empty string after valid stormname. (e.g. Rita 2005)
-    if stormname == "":
-        stormname = df.stormname.replace("",np.nan).ffill()[df.vmax == df.vmax.max()]
-        stormname = stormname.iloc[0] # could be more than one match. take first one.
-    if not isinstance(stormname, str) and np.isnan(stormname):
-        stormname = ""
-    return stormname
+    with warnings.catch_warnings():
+        warnings.simplefilter(action="ignore", category=FutureWarning)
+        first = df.iloc[0]
+        stormname = VortexTrack(f"{first.basin}{first.cy}{first.valid_time.year}").name
+        return stormname 
     
 def mean_track(df):
 
@@ -577,10 +572,13 @@ def mean_track(df):
     return df
 
 def plot_track(ax, start_label,group,end_label, scale=1, dailydot=False, 
-        label_interval_hours=1, onecolor=None, linestyle="solid"):
+        label_interval_hours=1, onecolor=None,
+        linestyle="solid", label=None,
+        alpha=1):
     logging.debug(f"plot_track: {start_label} {group}")
     group = group.sort_values("valid_time")
 
+    segment = []
     lformat = None
     for i in range(0, len(group)):
         row = group.iloc[i]
@@ -625,33 +623,34 @@ def plot_track(ax, start_label,group,end_label, scale=1, dailydot=False,
             lons[lons < 0] += 360
         logging.debug(f"{i} plot segment {lons} {lats}")
         
-        segment = ax.plot(lons, lats, c=color, lw=lw*scale, transform=cartopy.crs.PlateCarree(), linestyle=linestyle)
+        segment = ax.plot(lons, lats, c=color, lw=lw*scale,
+                transform=cartopy.crs.PlateCarree(), linestyle=linestyle,
+                label=label, alpha=alpha)
         if label_interval_hours and row.valid_time.hour % label_interval_hours == 0: # label if hour is multiple of label_interval_hours
             lformat = "%-d"
             if row.valid_time.hour != 0:
                 lformat = "%-Hz"
             ax.text(row.lon, row.lat, row.valid_time.strftime(lformat), color=contrasting_color(color), clip_box=ax.bbox, clip_on=True, 
-                ha='center',va='center_baseline',fontsize=6*scale, transform=cartopy.crs.PlateCarree())
-        markersize = scale*8 if row.valid_time.hour == 0 and dailydot else 0.
-        ax.plot(row.lon, row.lat, 'o', markersize=markersize, markerfacecolor=color, markeredgewidth=0.0, color=color, transform=cartopy.crs.PlateCarree())
+                ha='center',va='center_baseline',fontsize=5*scale, transform=cartopy.crs.PlateCarree())
+        markersize = scale*6.5 if row.valid_time.hour == 0 and dailydot else 0.
+        ax.plot(row.lon, row.lat, 'o', markersize=markersize, markerfacecolor=color, color=color,
+                transform=cartopy.crs.PlateCarree(), alpha=alpha)
     label = "track label description"
     already_annotated = label in [x.get_label() for x in ax.texts]
     if lformat and not already_annotated:
-        ax.annotate(text="day of month at hour 0", xy=(5,6), xycoords='axes pixels', fontsize=6, label=label, bbox={'facecolor':'white',
-            'linewidth':0, 'alpha':.9, 'pad':0.1, 'boxstyle':'round4'})
+        ax.annotate(text="day of\nmonth", xy=(20,12), xycoords='axes pixels',
+                fontsize=6, ha="center",
+                label=label, bbox={'facecolor':'white', 'linewidth':0, 'alpha':.9, 'pad':0.1, 'boxstyle':'circle'})
+    return segment
 
-def TClegend(ax):
-    # legend was screen-grabbed from tropicalatlantic.com
-    img = plt.imread('/glade/work/ahijevyc/share/TClegend.png')
-    xmin, dx = 0, 1
-    ymin = 0.01
-    hgt, wid, _ = img.shape
-    dy = dx*hgt/wid
-    legax = ax.figure.add_axes([xmin, ymin, dx, dy])
-    legax.yaxis.set_visible(False)
-    legax.xaxis.set_visible(False)
-    legax.imshow(img)
-    return legax
+def TClegend(ax, shrink=1, fraction=0.032, pad=0.055):
+    n = len(colors)
+    cbar=plt.cm.ScalarMappable(norm=mcolors.Normalize(vmin=0,vmax=n), cmap=cmap)
+    axCbar=ax.figure.colorbar(cbar, ax=ax, orientation="horizontal", drawedges=True,
+            shrink=shrink, fraction=fraction, pad=pad)
+    axCbar.set_ticks(np.array(range(n))+0.5)
+    axCbar.set_ticklabels(colors.keys())
+    return axCbar
 
 def interpolate_by_rad(rad, interval):
     # Interpolate in time 
@@ -666,10 +665,10 @@ def interpolate_by_rad(rad, interval):
 
 def interpolate(df, interval):
 
-    if interval not in ['1H','3H','6H','12H','24H']:
-        logging.error(f"atcf.interpolate(): unexpected time interval {interval}")
-        logging.error("Expected one of ['1H','3H','6H','12H','24H']")
-        sys.exit(1)
+    assert interval in ['1H','3H','6H','12H','24H'], (
+            f"atcf.interpolate(): unexpected time interval {interval}"
+             "Expected one of ['1H','3H','6H','12H','24H']"
+             )
 
     # Copied from ~ahijevyc/bin/interpolate_atcf.py on Mar 2, 2020. This method should supercede that script.
 
@@ -679,9 +678,6 @@ def interpolate(df, interval):
     if nbad > 0:
         logging.info(f"Dropping {nbad} wind radii line(s) with NaN valid_time")
         df.dropna(how='all', subset=['valid_time'], inplace=True)
-
-    # distinguish 34, 50 and 64-kt lines but treat 0kt and 34kt as the same
-    df.loc[df["rad"] == "0","rad"] = "34"
 
     # Include 34, 50 and 64 knot wind radii for each time, so missing radii are explicitly zero km when interpolating.
     df = return_expandedwindradii(df)
@@ -694,18 +690,19 @@ def interpolate(df, interval):
     return df
 
 
-def stringlatlon2float(lon, lat):
-    # Extract last character of lat and lon columns
-    # Multiply integer by -1 if "S" or "W"
-    # Divide by 10
-    S = lat.str[-1] == 'S'
-    lat = lat.str[:-1].astype(float) / 10.
-    lat[S] = lat[S] * -1
-    W = lon.str[-1] == 'W'
-    lon = lon.str[:-1].astype(float) / 10.
-    lon[W] = lon[W] * -1
+def stringlatlon2float(slon, slat):
+    """
+    Extract last character of slon and slat input.
+    Convert to float and divide by 10.
+    Multiply by -1 if slon ends with "W"
+    Multiply by -1 if slat ends with "S"
+    """
+    lon = slon.str[:-1].astype(float) / 10.
+    lat = slat.str[:-1].astype(float) / 10.
+    lon[slon.str.endswith('W')] *= -1
+    lat[slat.str.endswith('S')] *= -1
 
-    logging.debug("finished converting string lat/lons to float")
+    logging.debug("converted string lat/lons to float")
     return lon, lat
 
 # rad1-4 and seas1-4 columns
@@ -715,18 +712,22 @@ for f in ["rad", "seas"]:
         rscols.append(f+r)
         
 def expand_wind_radii(df, rads=['34','50','64']):
-    df = df.set_index("rad").reindex(rads) # make sure full set of thresholds is defined. original dataframe may not have them all.
-    df[rscols] = df[rscols].fillna(value=0) # fill missing rad1-4 and seas1-4 with zeros
+    # Define all wind radii, regardless of wind speed.
+    df = df.set_index("rad").reindex(rads)
+    # first fill missing rad1-4 and seas1-4 with zeros before forward-filling na's
+    df[rscols] = df[rscols].fillna(value=0)
     df = df.fillna(method='ffill')
     return df
 
 def return_expandedwindradii(df, rads=["34","50","64"]):
-    tracktimes = df.groupby(['basin','cy','initial_time','model','fhr'], sort=False) 
-    df = tracktimes.apply(expand_wind_radii, rads=rads)
-    df = df.droplevel(['basin','cy','initial_time','model','fhr']).reset_index()
+    # change 0kt to 34kt
+    df.loc[df["rad"] == "0","rad"] = "34"
+    df = df.groupby(['basin','cy','initial_time','model','fhr'], group_keys=False).apply(expand_wind_radii, rads=rads)
+    df = df.reset_index() # return index (rad) to column
     return df
 
 def add_missing_dummy_columns(df, columns):
+    dummy = {}
     for col in columns:
         if col in df.columns:
             continue
@@ -734,39 +735,37 @@ def add_missing_dummy_columns(df, columns):
 
         # if column doesn't exist make it zeroes
         if col in ['rad1', 'rad2', 'rad3', 'rad4','pouter', 'router', 'seas', 'seas1','seas2','seas3','seas4']:
-            df[col] = 0.
+            dummy[col] = 0.
 
         # if rad column doesn't exist make it string zero.
         elif col in ['rad']:
-            df[col] = '0'
+            dummy[col] = '0'
 
         # Initialize other default values.
         elif col in ['windcode', 'seascode']:
-            df[col] = '   '
+            dummy[col] = '   '
 
         # Numbers are NaN - change to 3*' ' in write
         elif col in ['rmw','gusts','eye','maxseas','heading','speed']:
-            df[col] = np.NaN
+            dummy[col] = np.NaN
 
         # Strings are empty
         elif col in ['subregion','stormname'] or col.startswith('user'):
-            df[col] = ''
+            dummy[col] = ''
 
         elif col in ['ty']:
-            df[col] = 'XX'
+            dummy[col] = 'XX'
 
         elif col in ['initials', 'depth']:
-            df[col] = 'X'
+            dummy[col] = 'X'
         else:
             logging.error(f"atcf.add_missing_dummy_columns(): unexpected col {col}")
             sys.exit(1)
-
+    dummy = pd.DataFrame(dummy, index=df.index) # propagate values to all rows
+    df = pd.concat([df, dummy], axis="columns")
     return df        
 
-ifile = '/glade/work/ahijevyc/work/atcf/Irma.ECMWF.dat'
-ifile = '/glade/scratch/mpasrt/uni/2018071700/latlon_0.500deg_0.25km/gfdl_tracker/tcgen/fort.64'
-
-def read_aswip(ifile = ifile):
+def read_aswip(ifile):
     # Read data into Pandas Dataframe
     logging.debug(f'Reading {ifile}')
 
@@ -796,7 +795,7 @@ def read_aswip(ifile = ifile):
 
     return df
 
-def read(ifile = ifile, fullcircle=False):
+def read(ifile, fullcircle=False):
     # Read data into Pandas Dataframe
     logging.debug(f'Reading {ifile} fullcircle={fullcircle}')
 
@@ -817,9 +816,7 @@ def read(ifile = ifile, fullcircle=False):
     if num_cols == 43:
         logging.info(f'assume GFDL tracker fort.64-style output with 43 columns in {ifile}')
         TPstr = "THERMO PARAMS"
-        if testline[35].strip() != TPstr:
-            logging.error(f"expected 36th column to be {TPstr}. got {testline[35].strip()}")
-            sys.exit(4)
+        assert testline[35].strip() == TPstr, f"expected 36th column to be {TPstr}. got {testline[35].strip()}"
         for ii in range(20,35):
             names[ii] = "space filler" + str(ii-19) # duplicate names not allowed
         names = names[0:35]
@@ -832,7 +829,7 @@ def read(ifile = ifile, fullcircle=False):
 
     # fort.66 has track id in the 3rd column.
     if num_cols == 31:
-        logging.info(f'Assuming GFDL track fort.66-style with 31 columns in {ifile}')
+        logging.info(f'assume GFDL track fort.66-style with 31 columns in {ifile}')
         # There is a cyclogenesis ID column for fort.66
         logging.debug('inserted ID for cyclogenesis in column 2 (zero-based)')
         names.insert(2, 'id') # ID for the cyclogenesis
@@ -860,9 +857,9 @@ def read(ifile = ifile, fullcircle=False):
         names.append('id')
 
     if num_cols == 11:
-        logging.info(f"Assuming {ifile} is simple adeck with 11 columns")
-        if ifile[-4:] != '.dat':
-            logging.info(f"even though file doesn't end in .dat {ifile}")
+        logging.info(f"assume {ifile} is simple adeck with 11 columns")
+        if not ifile.endswith('.dat'):
+            logging.warning(f"even though file doesn't end in .dat")
         names = names[0:11]
 
     if len(names) > max_num_cols:
@@ -883,11 +880,11 @@ def read(ifile = ifile, fullcircle=False):
     # If so, clean it up (i.e. truncate it)
 
     logging.debug("before pd.read_csv")
-    for name,v in zip(names,testline):
-        logging.debug(f"{name}:{v}")
-    logging.debug(f"converters={converters}")
-    logging.debug(f"dype={dtype}")
-    logging.debug(f"column_units={column_units}")
+    logging.debug(names)
+    logging.debug(testline)
+    #logging.debug(f"converters={converters}")
+    #logging.debug(f"dype={dtype}")
+    #logging.debug(f"column_units={column_units}")
 
 
     df = pd.read_csv(ifile,index_col=None,header=None, delimiter=",", usecols=usecols, names=names, 
@@ -896,7 +893,7 @@ def read(ifile = ifile, fullcircle=False):
     # fort.64 has asterisks sometimes. Problem with hwrf_tracker. 
     badlines = df['lon'].str.contains("\*")
     if any(badlines):
-        print.warning(f"tossing {len(badlines)} lines with asterisk in lon")
+        logging.warning(f"tossing {len(badlines)} lines with asterisk in lon")
         df = df[~badlines]
 
 
@@ -915,23 +912,21 @@ def read(ifile = ifile, fullcircle=False):
     # 2) make initial_times all the same as the first and put time offset in fhr.
     # This makes it possible to groupby best tracks with same unique_track list as model tracks.
     isbesttrack = df.model == 'BEST'
-    df.loc[isbesttrack] = df.loc[isbesttrack].groupby(["basin","cy","model"]).apply(new_besttrack_times)
+    df.loc[isbesttrack] = df.loc[isbesttrack].groupby(["basin","cy","model"],group_keys=False).apply(new_besttrack_times)
 
 
-    # Prior to 1999, rad column is blank. Fill with string zeros. 
+    # Prior to 1999, rad column is blank. Fill with numeric string. 
     # Downstream programs assume rads are convertable to floats. Empty strings are not convertable to floats.
     if "rad" not in df.columns or all(df.rad == ''):
-        logging.warning("atcf.read(): Empty rad column. This happens in pre-2000 files. Changing to string '0' so we can convert to float downstream")
-        df["rad"] = '0'
+        logging.warning("atcf.read(): No wind radii. This happens in pre-2000 files. Change to '34' so we can convert to float downstream")
+        df["rad"] = '34'
 
     # sanity check for rad values
     if not all(df.rad.isin(['0','34','50','64'])):
         logging.warning(f"atcf.read(): unexpected rad value(s) in atcf file {ifile}")
         logging.warning(df.rad.value_counts())
         # adecks before 2002 had 35-knot lines, not 34. That's okay. 
-        if df.valid_time.min().year > 2001:
-            logging.error("atcf.read(): this should not happen with post-2001 files. Exiting.")
-            sys.exit(1)
+        assert df.valid_time.min().year <= 2001, "atcf.read(): this should not happen with post-2001 files."
 
     # Add missing ATCF columns with dummy data.
     df = add_missing_dummy_columns(df, atcfcolumns)
@@ -942,14 +937,17 @@ def read(ifile = ifile, fullcircle=False):
 
     missing_speed_heading = all(((df.speed == 0) | pd.isnull(df.speed)) & ((df.heading == 0) | pd.isnull(df.heading))) # assume bad if everything is zero
     if missing_speed_heading:
-        logging.debug("Deriving speed and heading")
-        df = df.groupby(unique_track).apply(fill_speed_heading)
-        df = df.droplevel(unique_track) # indices are nice but mess up plot_atcf.py later. 
+        logging.debug("derive speed and heading")
+        df = df.groupby(unique_track, group_keys=False).apply(fill_speed_heading)
 
     # Put userdefine/userdata column pairs into single columns. 
     # Allow unaligned userdefine columns from multiple atcf files.
     # ["1", "2", "3", ... ] 
-    for x in [str(x) for x in range(1,usercolumnindex)]: 
+    for x in [str(x) for x in range(1,usercolumnindex)]:
+        ndefinitions = df["userdefine"+x].nunique()
+        if ndefinitions > 10:
+            logging.info(f"{ndefinitions} definitions for userdefine{x} column. Skipping")
+            continue
         # for each unique userdefine value in column 
         for v in df["userdefine"+x].unique():
             if v == "": continue # Ignore empty strings
@@ -982,16 +980,18 @@ def lon2s(lon):
     lon = f2s(lon) + EW
     return lon
 
-# function to compute great circle distance between point lat1 and lon1 and arrays of points 
-# INPUT:
-#   lon1 - longitude of origin with units
-#   lat1 - latitude of origin with units
-#   lons - longitudes of points to get distance to. Could be DataArray or numpy array with units
-#   lats - latitudes of points to get distance to
-# Returns 2 things:
-#   1) distance (pint quantity with units km)
-#   2) initial bearing from 1st pt (lon1, lat1) to an array of other points (lons, lats). (also pint quantity)
 def dist_bearing(lon1,lat1,lons,lats,Rearth=Rearth):
+    """
+    function to compute great circle distance between point lat1 and lon1 and arrays of points 
+    INPUT:
+        lon1 - longitude of origin with units
+        lat1 - latitude of origin with units
+        lons - longitudes of points to get distance to. Could be DataArray or numpy array with units
+        lats - latitudes of points to get distance to
+    Returns 2 things:
+        1) distance (pint quantity with units km)
+        2) initial bearing from 1st pt (lon1, lat1) to an array of other points (lons, lats). (also pint quantity)
+    """
 
     if False:
         # TODO: get array shapes working, and xarray handling
@@ -1007,8 +1007,11 @@ def dist_bearing(lon1,lat1,lons,lats,Rearth=Rearth):
     # MAYBE DELETE EVERYTHING BELOW IN THIS FUNCTION
     assert lat1 <=  90*deg, f"lat1 {lat1} >  90deg"
     assert lat1 >= -90*deg, f"lat1 {lat1} < -90deg"
-    # TODO: allow scalar lons, lats and xarrays
-    #lons, lats = np.atleast_1d(lons, lats)
+    # allow scalar lons, lats and xarrays
+    if np.ndim(lons) == 0 and np.ndim(lats) == 0:
+        lons, lats = np.atleast_1d(lons, lats)
+    # Don't lose xarray characteristics with np.atleast_1d
+    # lons, lats = np.atleast_1d(lons, lats)
     assert lats.max() <  90, "lats element > 90"
     assert lats.min() > -90, "lats element < -90"
     if hasattr(lons, 'metpy'):
@@ -1070,24 +1073,30 @@ def get_azimuthal_mean(x, distance, binsize = 25.*units.km):
 
 
 def get_ext_of_wind(wind_speed, distance, bearing, raw_vmax, windcode='NEQ', wind_threshes=wind_threshes, 
-        rad_search_radius=300.*units.parse_expression("nautical_mile"), lonCell=None, latCell=None, wind_radii_method='max'):
-    
-    wind_radii = {"wind_radii_method":wind_radii_method}
-    # Returns dictionary "wind_radii" where
-    # wind_radii = {
-    #  wind_radii_method : wind_radii_method,
-    #           windcode : windcode,
-    #           raw_vmax : raw_vmax,
-    #                rads: {
-    #                  34kt: [rad1,rad2,rad3,rad4],
-    #                  50kt: [rad1,rad2,rad3,rad4],
-    #                  64kt: [rad1,rad2,rad3,rad4]
-    #                  }
-    #          }
+        rad_search_radius=300.*nmi, lonCell=None, latCell=None, wind_radii_method='max'):
+    """
+    Return wind_radii dictionary where
+    wind_radii = {
+      wind_radii_method : wind_radii_method,
+               windcode : windcode,
+               raw_vmax : raw_vmax,
+                    rads: {
+                              wind_threshes[0]:  [rad1,rad2,rad3,rad4],
+                              ...
+                              wind_threshes[-1]: [rad1,rad2,rad3,rad4],
+                          }
+    }
+    """
+    assert wind_radii_method in ["azimuthal_mean", "max", "percentile"], (
+            f"unexpected wind_radii_method: {wind_radii_method}")
 
+    wind_radii = {"wind_radii_method":wind_radii_method}
     wind_radii['raw_vmax'] = raw_vmax
     wind_radii['windcode'] = windcode
     wind_radii['rads'] = {}
+    if raw_vmax < wind_threshes[0]:
+        wind_radii['rads'][wind_threshes[0]] = [0,0,0,0]*units.km # write out zero rads for first wind threshold and return 
+        return wind_radii
     # Originally had distance < 800km, but Chris D. suggested 300nm in Sep 2018 email
     # This was to deal with Irma and the unrelated 34 knot onshore flow in Georgia
     # Looking at HURDAT2 R34 sizes (since 2004), ex-tropical storm Karen 2015 had 710nm.
@@ -1095,9 +1104,6 @@ def get_ext_of_wind(wind_speed, distance, bearing, raw_vmax, windcode='NEQ', win
     # see /glade/work/ahijevyc/atcf/R34noEX.png and R34withEX.png
     # wind_speed is masked beyond rad_search_radius
     wind_speed = wind_speed.where(distance < rad_search_radius)
-    if raw_vmax < wind_threshes[0]:
-        wind_radii['rads'][wind_threshes[0]] = [0,0,0,0]*units.km # write out zero rads for first wind threshold and return 
-        return wind_radii
 
     logging.debug(f'  get_ext_of_wind(): method {wind_radii_method} windcode {windcode}')
     logging.debug('  get_ext_of_wind(): wind_thresh     azimuth       npts    dist   bearing      lat        lon')
@@ -1115,9 +1121,9 @@ def get_ext_of_wind(wind_speed, distance, bearing, raw_vmax, windcode='NEQ', win
         wind_radii['rads'][wind_thresh] = []
         for az in quads[windcode]:
             daz = 90*deg
-            # Compute azimuthal mean
+            iquad = (az <= bearing) & (bearing < az+daz) 
             if wind_radii_method == "azimuthal_mean":
-                iquad = (az <= bearing) & (bearing < az+daz) 
+                # Compute azimuthal mean
                 wind_speed_vs_radius_km = get_azimuthal_mean(wind_speed[iquad], distance[iquad], binsize = 25.*units.km)
                 if any(wind_speed_vs_radius_km >= wind_thresh):
                     max_dist_of_wind_threshold_nm = np.max(radius_km[wind_speed_vs_radius_km >= wind_thresh])
@@ -1126,21 +1132,19 @@ def get_ext_of_wind(wind_speed, distance, bearing, raw_vmax, windcode='NEQ', win
                     wind_radii['rads'][wind_thresh].append(0.*units.km)
             else:
                 # percentile method or max method
-                iquad = (az <= bearing) & (bearing < az+daz) & (wind_speed >= wind_thresh)
+                iquad = iquad & (wind_speed >= wind_thresh)
                 if iquad.sum():
                     x_km = distance.where(iquad)
-                    if wind_radii_method[-10:] == "percentile":
+                    if wind_radii_method.endswith("percentile"):
                         # assume wind_radii_method is a number followed by the string "percentile".
-                        distance_percentile = float(wind_radii_method[:-10])
+                        distance_percentile = float(wind_radii_method.replace("percentile",""))
                         # index of array entry nearest to percentile value
                         idist_of_wind_threshold=abs(x_km-np.percentile(x_km,distance_percentile,interpolation='nearest')).argmin()
                         wind_radii['rads'][wind_thresh].append(np.percentile(x_km, distance_percentile))
-                    elif wind_radii_method == "max":
+                    else:
+                        assert wind_radii_method == "max"
                         idist_of_wind_threshold = x_km.argmax(x_km.dims)
                         wind_radii['rads'][wind_thresh].append(x_km.max().data)
-                    else:
-                        logging.error(f"unexpected wind_radii_method: {wind_radii_method}")
-                        sys.exit(1)
                 else:
                     wind_radii['rads'][wind_thresh].append(0.*units.km)
 
@@ -1230,7 +1234,7 @@ def derived_winds(u10, v10, mslp, lonCell, latCell, row, vmax_search_radius=250.
             fig = debugplot(row,lonCell,latCell,u10,v10,speed,mslp,where=vmaxrad)
             ofile = f"negaverageVt.{lon2s(row.lon)}.{lat2s(row.lat)}.{row.valid_time.strftime('%Y%m%d%H')}.png"
             plt.savefig(ofile)
-            print(f"created {os.path.realpath(ofile)}")
+            logging.info(f"created {os.path.realpath(ofile)}")
 
     # Get radius of max wind
     raw_rmw = distance.isel(ispeed_max).data
@@ -1312,7 +1316,7 @@ def origgridWRF(df, griddir, grid="d03", wind_radii_method = "max"):
     WRFmember = df.model.str.extract(wregex, flags=re.IGNORECASE)
     # column 0 will have match or null
     if pd.isnull(WRFmember.iloc[:,0]).any():
-        logging.warning(f'Assuming WRF ensemble member, but not all model strings match {wregex}')
+        logging.warning(f'assume WRF ensemble member, but not all model strings match {wregex}')
         pdb.set_trace()
     ens = WRFmember.iloc[0,0]
     df = df.groupby('fhr').apply(WRFraw_vitals,griddir, ens,wind_radii_method=wind_radii_method)
@@ -1361,7 +1365,7 @@ def origgrid(df, griddir, ensemble_prefix="ens_", wind_radii_method="max"):
     
     m = re.search(r'EE(\d\d)', model)
     if not m:
-        logging.debug('Assuming ECMWF ensemble member, but did not find EE\d\d in model string')
+        logging.debug('assume ECMWF ensemble member, but did not find EE\d\d in model string')
         logging.debug(f'no original grid for {model} - skipping')
         return df
     ens = int(m.group(1)) # strip leading zero
@@ -1399,8 +1403,7 @@ def origgrid(df, griddir, ensemble_prefix="ens_", wind_radii_method="max"):
     df["originalmeshfile"] = gridfile
     logging.info(f'opening {gridfile}')
     ds = xarray.open_dataset(gridfile).metpy.quantify()
-    df = df.groupby('fhr').apply(ECMWFraw_vitals,ds,wind_radii_method=wind_radii_method)
-    df = df.droplevel('fhr')
+    df = df.groupby('fhr', group_keys=False).apply(ECMWFraw_vitals,ds,wind_radii_method=wind_radii_method)
     return df
 
 def ECMWFraw_vitals(row, ds, wind_radii_method=None):
@@ -1454,69 +1457,77 @@ def ll_arc_distance(lat0=0*degN, lon0=0*degE, heading=0*deg, distance=0.*units.k
     return np.degrees(newlon), np.degrees(newlat)
 
 def cross_track(track, cross):
-    track = track.sort_values("valid_time")
+    track = track.set_index("valid_time").sort_index()
+    # TODO: keep repeated valid_times (multiple wind radii)
+    track = track[~track.index.duplicated(keep='first')]
     ptrack = track.copy()
 
-    for i, row in track.iterrows():
-        future_times = track.valid_time > row.valid_time
+    for valid_time, row in track.iterrows():
+        future_times = track.index > valid_time
         if future_times.sum() == 0:
             break
-        # Find the first future time. 
-        next_time = track.valid_time == track.loc[future_times,"valid_time"].min()
+        # Find the first future time.
+        inext = future_times.argmax() # first True
+        next_time = track.index[inext]
         # Get lon/lat and elapsed time at next location.
-        # With .mean(), reduce (possibly) multiple rows (for different wind radii) to one.
-        lon1 = track.loc[next_time, "lon"].mean() * degE
-        lat1 = track.loc[next_time, "lat"].mean() * degN
+        lon1 = track.lon[inext] * degE
+        lat1 = track.lat[inext] * degN
         # days since start of track
-        dt = track.loc[next_time, "valid_time"].mean() - track.valid_time.min()
-        dt_days = dt.total_seconds()/24/3600 * units("day")
-        cross_track_error = cross * dt_days
-        perpendicular_heading = ptrack.loc[next_time,"heading"].mean() *units("deg") + 90*units("deg")
+        dt = next_time - track.index.min()
+        dt = dt.total_seconds()/24/3600 * units("day")
+        cross_track_error = cross * dt
+        perpendicular_heading = ptrack.heading[inext] *units("deg") + 90*units("deg")
        
         # head off perpendicular to track, starting from end of control segment 
         newlon, newlat = ll_arc_distance(lon0=lon1, lat0=lat1, distance=cross_track_error, heading=perpendicular_heading)
         # Assign one value to (possibly) multiple rows (for different wind radii).
-        ptrack.loc[next_time, "lon"] = newlon.to(degE).m
-        ptrack.loc[next_time, "lat"] = newlat.to(degN).m
+        ptrack.loc[next_time, "lon"] = newlon.m
+        ptrack.loc[next_time, "lat"] = newlat.m
 
-    return ptrack
+    return ptrack.reset_index()
 
 
 
 def veer_track(track, veer):
-    track = track.sort_values("valid_time")
+    track = track.set_index("valid_time").sort_index()
+    # TODO: keep repeated valid_times (multiple wind radii)
+    track = track[~track.index.duplicated(keep='first')]
     ptrack = track.copy()
 
-    for i, row in track.iterrows():
+    for valid_time, row in track.iterrows():
         lon0 = row.lon * degE
         lat0 = row.lat * degN
-        valid_time = row.valid_time
-        future_times = track.valid_time > valid_time
+        future_times = track.index > valid_time
         if future_times.sum() == 0:
             logging.debug(f"no times later than {valid_time}. stop veering.")
             break
+        # Find the first future time.
+        inext = future_times.argmax() # first True
         # Find the first future time. 
-        next_time = track.valid_time == track.loc[future_times,"valid_time"].iloc[0]
-        # define control segment from time to next time
-        # With .mean(), reduce (possibly) multiple rows (for different wind radii) to one.
-        lon1 = track.loc[next_time, "lon"].mean() * degE
-        lat1 = track.loc[next_time, "lat"].mean() * degN
+        next_time = track.index[inext]
+        # get distance and heading of original segment from this time to next time
+        lon1 = track.lon[inext] * degE
+        lat1 = track.lat[inext] * degN
+        distance, heading = spc.gdist_bearing(lon0,lat0,lon1,lat1)
+        logging.info(f"lon0={lon0} lat0={lat0} lon1={lon1} lat1={lat1}")
+
         # days since start of track
-        dt = track.loc[next_time, "valid_time"].mean() - track.valid_time.min()
-        distance, heading = dist_bearing(lon0,lat0,lon1,lat1)
-        dt_days = dt.total_seconds()/24/3600 * units("day") 
-        new_heading = heading + veer * dt_days
+        dt = next_time - track.index.min()
+        dt = dt.total_seconds()/24/3600 * units("day")
+        new_heading = heading + veer * dt
+        logging.info(f"{heading} dt={dt} new_heading={new_heading}")
        
         # start of perturbed segment is end of previous perturbed segment
-        lon0 = ptrack.loc[ptrack.valid_time == valid_time, "lon"].mean() * degE
-        lat0 = ptrack.loc[ptrack.valid_time == valid_time, "lat"].mean() * degN
+        lon0 = ptrack.loc[valid_time, "lon"] * degE
+        lat0 = ptrack.loc[valid_time, "lat"] * degN
         # head off in new direction for distance of control segment
         newlon, newlat = ll_arc_distance(lon0=lon0, lat0=lat0, distance=distance, heading=new_heading)
-        # Assign one value to (possibly) multiple rows (for different wind radii).
-        ptrack.loc[next_time, "lon"] = newlon.to("degrees_E").m
-        ptrack.loc[next_time, "lat"] = newlat.to("degrees_N").m
+        # Assign one value to (possibly) multiple rows (for different wind radii)
+        logging.info(f"perturbed lon0/lat0={lon0}/{lat0} dist={distance} next_time={next_time} newlon={newlon} newlat={newlat}")
+        ptrack.loc[next_time, "lon"] = newlon.m # convert quantity to magnitude or it will be treated as radians
+        ptrack.loc[next_time, "lat"] = newlat.m
 
-    return ptrack
+    return ptrack.reset_index()
 
 
 
@@ -1524,7 +1535,6 @@ if __name__ == "__main__":
     df = read(ifile=sys.argv[1])
     #df = df.loc[df.valid_time >= pd.to_datetime("20121027")]  # delay the perturbation to SANDY
     #df = df.loc[df.valid_time <= pd.to_datetime("201210311200")]  # truncate end
-    unique_track = ['basin', 'cy', 'initial_time', 'model']
     perts = np.arange(-2,3,1) * units.parse_expression("deg/day") # directional error
     perts = np.arange(-50,51,25) * units.parse_expression("km/day") # cross-track error
     ofile = f"perts{perts[0].m}-{perts[-1].m}"

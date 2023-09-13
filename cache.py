@@ -1,6 +1,7 @@
 # Copied from http://code.activestate.com/recipes/491261-caching-and-throttling-for-urllib2/ May 16, 2017
+import pdb
 import http.client
-import unittest
+import logging
 import hashlib
 import urllib.request, urllib.error, urllib.parse
 import os
@@ -21,23 +22,21 @@ class CacheHandler(urllib.request.BaseHandler):
             os.mkdir(self.cacheLocation)
             
     def default_open(self,request):
-        if ((request.get_method() == "GET") and 
-            (CachedResponse.ExistsInCache(self.cacheLocation, request.get_full_url()))):
-            # print "CacheHandler: Returning CACHED response for %s" % request.get_full_url()
-            return CachedResponse(self.cacheLocation, request.get_full_url(), setCacheHeader=True)
+        url = request.full_url
+        # Tried passing data to urlopen using optional data argument but 
+        # got HTTP Error 403: Forbidden
+        if request.data is not None:
+            url = url + "?" + request.data.decode()
+        if CachedResponse.ExistsInCache(self.cacheLocation, url):
+            logging.debug(f"CacheHandler: Returning CACHED response for {url}")
+            return CachedResponse(self.cacheLocation, url, setCacheHeader=True)
         else:
-            return urllib.request.urlopen(request.get_full_url())
-
-    def http_response(self, request, response):
-        if request.get_method() == "GET":
-            if 'd-cache' not in response.info():
-                CachedResponse.StoreInCache(self.cacheLocation, request.get_full_url(), response)
-                return CachedResponse(self.cacheLocation, request.get_full_url(), setCacheHeader=False)
-            else:
-                return CachedResponse(self.cacheLocation, request.get_full_url(), setCacheHeader=True)
-        else:
+            logging.debug(f"CacheHandler: request {url}")
+            response = urllib.request.urlopen(url)
+            logging.debug(f"CacheHandler: store {url} in {self.cacheLocation}")
+            CachedResponse.StoreInCache(self.cacheLocation, url, response)
             return response
-    
+
 class CachedResponse(io.StringIO):
     """An urllib2.response-like object for cached responses.
 
@@ -45,30 +44,33 @@ class CachedResponse(io.StringIO):
     the network, check the x-cache header rather than the object type."""
     
     def ExistsInCache(cacheLocation, url):
+        url = url.encode('ascii')
         hash = hashlib.md5(url).hexdigest()
         return (os.path.exists(cacheLocation + "/" + hash + ".headers") and 
                 os.path.exists(cacheLocation + "/" + hash + ".body"))
     ExistsInCache = staticmethod(ExistsInCache)
 
     def StoreInCache(cacheLocation, url, response):
+        url = url.encode('ascii')
         hash = hashlib.md5(url).hexdigest()
-        f = open(cacheLocation + "/" + hash + ".headers", "w")
-        headers = str(response.info())
-        f.write(headers)
-        f.close()
-        f = open(cacheLocation + "/" + hash + ".body", "w")
-        f.write(response.read())
-        f.close()
+        with open(cacheLocation + "/" + hash + ".headers", "w") as f:
+            headers = str(response.info())
+            logging.debug(f"write {hash} headers {headers}")
+            f.write(headers)
+        with open(cacheLocation + "/" + hash + ".body", "w") as f:
+            logging.debug(f"write {hash} body")
+            f.write(response.read().decode())
     StoreInCache = staticmethod(StoreInCache)
     
     def __init__(self, cacheLocation,url,setCacheHeader=True):
         self.cacheLocation = cacheLocation
+        url = url.encode('ascii')
         hash = hashlib.md5(url).hexdigest()
-        io.StringIO.__init__(self, file(self.cacheLocation + "/" + hash+".body").read())
+        io.StringIO.__init__(self, open(self.cacheLocation + "/" + hash+".body").read())
         self.url     = url
         self.code    = 200
         self.msg     = "OK"
-        headerbuf = file(self.cacheLocation + "/" + hash+".headers").read()
+        headerbuf = open(self.cacheLocation + "/" + hash+".headers").read()
         if setCacheHeader:
             headerbuf += "d-cache: %s/%s\r\n" % (self.cacheLocation,hash)
         self.headers = http.client.HTTPMessage(io.StringIO(headerbuf))

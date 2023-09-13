@@ -32,12 +32,14 @@ def get_atcfname_from_stormname_year(stormname, year, version="04r00_20230314"):
         logging.error(f"ibtracs.get_atcfname_from_stormame_year(): no {stormname} {year} in {ifile}")
         sys.exit(1)
 
-def getExt(stormname,year,trackdf, narrtimes):
-    etxt = f"../inland_tc_position_dat/{stormname.capitalize()}.{year}.txt"
+def getExt(stormname, year, trackdf, narrtimes):
+    etxt = f"/glade/scratch/ahijevyc/vortexsoutheast/inland_tc_position_dat/{stormname.capitalize()}.{year}.txt"
     if not os.path.exists(etxt):
         logging.error(f"{etxt} not found")
         return trackdf
     trackdf = trackdf.set_index("valid_time")
+    assert not trackdf.index.duplicated().any(), f"ibtracs.getExt expects no duplicate valid times. Did you forget to remove 50 and 64-kt lines?"
+
     # first 3-hrly time after track ends (out-of-bounds). add 1 second to ensure it is greater than last track time.
     first_oob_narrtime = (trackdf.index.max()+pd.Timedelta(1,unit='s')).ceil(freq="3H")
     logging.warning(f"first out-of-bounds narrtime is {first_oob_narrtime}")
@@ -171,7 +173,7 @@ def get_df(stormname=None, year=None, version="04r00", basin="ALL"):
     logging.debug(f"ibtracs.get_atcf(): read {len(df)} lines from {ifile}")
 
     if stormname and year: # optional keyword arguments
-        imatch = (df['NAME'] == stormname.upper()) & (df['SEASON'] == year)
+        imatch = (df['NAME'] == stormname.upper()) & (df['SEASON'] == int(year))
         assert imatch.sum(), (f"No {stormname} {year} in ibtracs {ifile}")
         df = df[imatch]
 
