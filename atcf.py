@@ -56,7 +56,7 @@ colors = ['white',(.00,.61,.76),(.45,.75,.29),(.97,.94,.53),(.99,.75,.15),(.95,.
 # more purple, yellow
 colors = [(1,1,1),(.10,.66,.85),(.50,.80,.34),(.97,.94,.25),(.99,.75,.05),(.95,.46,.20),(1,.07,.07),(0.77,.09,.77)]
 
-colors = {"NONTD": colors[0],
+colors = {
         "TD": colors[1],
         "TS": colors[2],
         "CAT1": colors[3],
@@ -354,20 +354,24 @@ def decorate_ax(ax, bscale='50m'):
     countries = cartopy.feature.NaturalEarthFeature(category='cultural',
                 name='admin_0_countries', scale=bscale,
                 facecolor=cartopy.feature.COLORS['land'])
-
+    alpha = 0.5
     ocean = cartopy.feature.NaturalEarthFeature(category='physical',
             name='ocean', scale=bscale, edgecolor='face',
-            facecolor=idl_water_color) #cartopy.feature.COLORS['water'])
+            #facecolor=cartopy.feature.COLORS['water'])
+            facecolor=idl_water_color,
+            alpha=alpha)
 
     ax.add_feature(ocean) 
     ax.add_feature(countries, edgecolor='gray', lw=0.375)
-    ax.add_feature(cartopy.feature.LAKES, facecolor=idl_water_color)
+    ax.add_feature(cartopy.feature.LAKES, facecolor=idl_water_color, alpha=alpha)
     ax.add_feature(cartopy.feature.STATES.with_scale(bscale), lw=0.25, edgecolor='gray')
     gl = ax.gridlines(crs=cartopy.crs.PlateCarree(), draw_labels=True, 
-            x_inline=False, color="white", linestyle='--', alpha=0.75)
+            x_inline=False, color="gray", linestyle='--', alpha=alpha)
     gl.xformatter = LONGITUDE_FORMATTER
     gl.top_labels = False # Don't overwrite title
     gl.yformatter = LATITUDE_FORMATTER
+    #gl.xlabel_style = {"size":16} # "small" or other strings has no effect
+    #gl.ylabel_style = {"size":16}
         
     return ax
 
@@ -387,7 +391,7 @@ def vmax2category(vmax):
     else:
         category = "TD"
 
-    return category, colors[category]
+    return category
 
 
 def iswarmcore(track, min_warmcore_percent=25):
@@ -571,7 +575,7 @@ def mean_track(df):
     df["model"] = "MEAN"
     return df
 
-def plot_track(ax, start_label,group,end_label, scale=1, dailydot=False, 
+def plot_track(ax, start_label,group,end_label, scale=1,
         label_interval_hours=1, onecolor=None,
         linestyle="solid", label=None,
         alpha=1):
@@ -580,9 +584,12 @@ def plot_track(ax, start_label,group,end_label, scale=1, dailydot=False,
 
     segment = []
     lformat = None
+    group["TCcategory"] = [vmax2category(x*kt) for x in group.vmax]
+    group["color"] = [colors[c] for c in group["TCcategory"]]
+    if onecolor:
+        group["color"] = onecolor
     for i in range(0, len(group)):
         row = group.iloc[i]
-        TCcategory, color = vmax2category(row.vmax*kt)
         if i == 0:
             # first half-segment
             row_1 = group.iloc[i]
@@ -591,13 +598,13 @@ def plot_track(ax, start_label,group,end_label, scale=1, dailydot=False,
             else:
                 row1 = group.iloc[i+1]
             ax.text(row.lon,row.lat, start_label, clip_box=ax.bbox, clip_on=True, 
-                    ha='center', va='center', fontsize=9*scale, transform=cartopy.crs.PlateCarree())
+                    ha='center', va='center', fontsize="small", transform=cartopy.crs.PlateCarree())
         elif i == len(group)-1:
             # last half-segment
             row_1 = group.iloc[i-1]
             row1 = group.iloc[i]
             ax.text(row.lon, row.lat, end_label, clip_box=ax.bbox, clip_on=True,
-                    ha='center', va='center', fontsize=8*scale, transform=cartopy.crs.PlateCarree())
+                    ha='center', va='center', fontsize="x-small", transform=cartopy.crs.PlateCarree())
         else:
             # middle segments
             row_1 = group.iloc[i-1]
@@ -607,12 +614,7 @@ def plot_track(ax, start_label,group,end_label, scale=1, dailydot=False,
         lw = 1.5
         lat1 = (row.lat + row1.lat) / 2.
         lon1 = circmean([row.lon, row1.lon], low=-180, high=180)
-        if TCcategory == "TD" and row1.basin == 'TG':
-            # IF this is TC genesis track and not a storm with TC vitals
-            # use "OTHER (NON TD)" instead of "CLASSIFIED TD" color
-            color = "white"
-        if onecolor:
-            color = onecolor
+        color = row.color
         # Include middle point in line segments. Full segment is a bent line.
         lons = np.array([lon0,row.lon,lon1])
         lats = [lat0,row.lat,lat1]
@@ -623,30 +625,31 @@ def plot_track(ax, start_label,group,end_label, scale=1, dailydot=False,
             lons[lons < 0] += 360
         logging.debug(f"{i} plot segment {lons} {lats}")
         
-        segment = ax.plot(lons, lats, c=color, lw=lw*scale,
+        segment, = ax.plot(lons, lats, c=color, lw=lw*scale,
                 transform=cartopy.crs.PlateCarree(), linestyle=linestyle,
                 label=label, alpha=alpha)
-        if label_interval_hours and row.valid_time.hour % label_interval_hours == 0: # label if hour is multiple of label_interval_hours
-            lformat = "%-d"
-            if row.valid_time.hour != 0:
-                lformat = "%-Hz"
-            ax.text(row.lon, row.lat, row.valid_time.strftime(lformat), color=contrasting_color(color), clip_box=ax.bbox, clip_on=True, 
-                ha='center',va='center_baseline',fontsize=5*scale, transform=cartopy.crs.PlateCarree())
-        markersize = scale*6.5 if row.valid_time.hour == 0 and dailydot else 0.
-        ax.plot(row.lon, row.lat, 'o', markersize=markersize, markerfacecolor=color, color=color,
-                transform=cartopy.crs.PlateCarree(), alpha=alpha)
-    label = "track label description"
-    already_annotated = label in [x.get_label() for x in ax.texts]
-    if lformat and not already_annotated:
-        ax.annotate(text="day of\nmonth", xy=(20,12), xycoords='axes pixels',
-                fontsize=6, ha="center",
-                label=label, bbox={'facecolor':'white', 'linewidth':0, 'alpha':.9, 'pad':0.1, 'boxstyle':'circle'})
-    return segment
 
-def TClegend(ax, shrink=1, fraction=0.032, pad=0.055):
+    if label_interval_hours is None:
+        return ax
+    # label if hour is multiple of label_interval_hours
+    # outside segment loop so it remains on top of segments
+    for i, row in group[group.valid_time.dt.hour % label_interval_hours == 0].iterrows():
+        color = row.color
+        ax.plot(row.lon, row.lat, 'o', markersize=scale*5, markerfacecolor=color, color=color,
+                transform=cartopy.crs.PlateCarree(), alpha=alpha)
+        lformat = "%-d"
+        if row.valid_time.hour != 0:
+            lformat = "%-Hz"
+        d = ax.text(row.lon, row.lat, row.valid_time.strftime(lformat),
+                color=contrasting_color(color), clip_box=ax.bbox, clip_on=True,
+                ha='center',va='center_baseline',fontsize=scale*4, transform=cartopy.crs.PlateCarree())
+    return ax
+
+def TClegend(shrink=1, fraction=0.02, pad=0.03):
     n = len(colors)
     cbar=plt.cm.ScalarMappable(norm=mcolors.Normalize(vmin=0,vmax=n), cmap=cmap)
-    axCbar=ax.figure.colorbar(cbar, ax=ax, orientation="horizontal", drawedges=True,
+    ax = plt.gcf().get_axes() # all the axes (1 or more)
+    axCbar=plt.colorbar(cbar, ax=ax, orientation="horizontal", drawedges=True,
             shrink=shrink, fraction=fraction, pad=pad)
     axCbar.set_ticks(np.array(range(n))+0.5)
     axCbar.set_ticklabels(colors.keys())
@@ -1540,7 +1543,8 @@ if __name__ == "__main__":
     ofile = f"perts{perts[0].m}-{perts[-1].m}"
     if os.path.exists(ofile+".dat"):
         logging.info(f"{ofile}.dat exists already. Will append")
-    ax = get_ax()
+    fig, ax = plt.subplots()
+    ax = decorate_ax()
     for track_id, track_df in df.groupby(unique_track):
         track_df = interpolate(track_df, '3H')
         logging.info(track_id)
