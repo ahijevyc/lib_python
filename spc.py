@@ -830,9 +830,7 @@ def get_issuance_time(zipfilename: str):
                 issue = "2100"
     elif valid == (0,4):
         assert not valid_same_day
-        if prodiss < idate + datetime.timedelta(hours=6):
-            issue = "0600"
-        elif prodiss < idate + datetime.timedelta(hours=13):
+        if prodiss < idate + datetime.timedelta(hours=13):
             issue = "1300"  
         elif prodiss < idate + datetime.timedelta(hours=17):
             issue = "1700"

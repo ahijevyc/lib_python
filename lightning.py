@@ -22,7 +22,7 @@ def get_obs(valid_start, valid_end, obsvar, twin, rptdist):
         wbugtimes = slice(valid_start, valid_end - pd.Timedelta(minutes=30))
         cgds = xarray.open_dataset(Path("wbug_lightning") / f"flash.{rptdist}km_30min.nc")
         if cgds.sel(time_coverage_start=wbugtimes).time_coverage_start.size == 0:
-            logging.warning(f"no wbug times {wbugtimes}")
+            logging.warning(f"no wbug times for [{valid_start},{valid_end})")
             return None
         ds = (
             cgds.sel(time_coverage_start=wbugtimes).mean(dim="time_coverage_start")
