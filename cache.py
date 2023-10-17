@@ -3,6 +3,7 @@ import pdb
 import http.client
 import logging
 import hashlib
+from pathlib import Path
 import urllib.request, urllib.error, urllib.parse
 import os
 import io
@@ -29,13 +30,12 @@ class CacheHandler(urllib.request.BaseHandler):
             url = url + "?" + request.data.decode()
         if CachedResponse.ExistsInCache(self.cacheLocation, url):
             logging.debug(f"CacheHandler: Returning CACHED response for {url}")
-            return CachedResponse(self.cacheLocation, url, setCacheHeader=True)
         else:
             logging.debug(f"CacheHandler: request {url}")
             response = urllib.request.urlopen(url)
             logging.debug(f"CacheHandler: store {url} in {self.cacheLocation}")
             CachedResponse.StoreInCache(self.cacheLocation, url, response)
-            return response
+        return CachedResponse(self.cacheLocation, url, setCacheHeader=True)
 
 class CachedResponse(io.StringIO):
     """An urllib2.response-like object for cached responses.
@@ -46,31 +46,33 @@ class CachedResponse(io.StringIO):
     def ExistsInCache(cacheLocation, url):
         url = url.encode('ascii')
         hash = hashlib.md5(url).hexdigest()
-        return (os.path.exists(cacheLocation + "/" + hash + ".headers") and 
-                os.path.exists(cacheLocation + "/" + hash + ".body"))
+        cacheLocation = Path(cacheLocation)
+        return (os.path.exists(cacheLocation  / (hash + ".headers")) and 
+                os.path.exists(cacheLocation / (hash + ".body")))
     ExistsInCache = staticmethod(ExistsInCache)
 
     def StoreInCache(cacheLocation, url, response):
         url = url.encode('ascii')
+        cacheLocation = Path(cacheLocation)
         hash = hashlib.md5(url).hexdigest()
-        with open(cacheLocation + "/" + hash + ".headers", "w") as f:
+        with open(cacheLocation / (hash + ".headers"), "w") as f:
             headers = str(response.info())
             logging.debug(f"write {hash} headers {headers}")
             f.write(headers)
-        with open(cacheLocation + "/" + hash + ".body", "w") as f:
+        with open(cacheLocation / (hash + ".body"), "w") as f:
             logging.debug(f"write {hash} body")
             f.write(response.read().decode())
     StoreInCache = staticmethod(StoreInCache)
     
     def __init__(self, cacheLocation,url,setCacheHeader=True):
-        self.cacheLocation = cacheLocation
+        self.cacheLocation = Path(cacheLocation)
         url = url.encode('ascii')
         hash = hashlib.md5(url).hexdigest()
-        io.StringIO.__init__(self, open(self.cacheLocation + "/" + hash+".body").read())
+        io.StringIO.__init__(self, open(self.cacheLocation / (hash+".body")).read())
         self.url     = url
         self.code    = 200
         self.msg     = "OK"
-        headerbuf = open(self.cacheLocation + "/" + hash+".headers").read()
+        headerbuf = open(self.cacheLocation / (hash+".headers")).read()
         if setCacheHeader:
             headerbuf += "d-cache: %s/%s\r\n" % (self.cacheLocation,hash)
         self.headers = http.client.HTTPMessage(io.StringIO(headerbuf))
@@ -79,4 +81,3 @@ class CachedResponse(io.StringIO):
         return self.headers
     def geturl(self):
         return self.url
-
