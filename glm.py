@@ -36,7 +36,11 @@ def download(start, end, bucket="noaa-goes16", product="GLM-L2-LCFA", odir=GLMDI
         # download all files in an hourly directory
         path = f'{bucket}/{product}/{hourly.year}/{hourly.timetuple().tm_yday:03.0f}/{hourly.hour:02.0f}'
         logging.info(f"fs.ls({path})")
-        files = fs.ls(path)
+        try:
+            files = fs.ls(path)
+        except FileNotFoundError:
+            logging.error(f"{path} not found")
+            sys.exit(1)
 
         if files is None or len(files) == 0:
             logging.error(f"No files match {path}")
@@ -53,13 +57,15 @@ def download(start, end, bucket="noaa-goes16", product="GLM-L2-LCFA", odir=GLMDI
                 logging.debug(f"{f} at or past end")
                 continue
 
-            ofiles.append(odir+f)
-            if os.path.exists(odir+f) and not clobber:
+            if os.path.exists(odir+f) and os.path.getsize(odir+f) and not clobber:
                 logging.debug(f"{f} already downloaded")
             else:
+                if os.path.exists(odir+f) and os.path.getsize(odir+f) == 0:
+                    logging.warning(f"{f} zero size. downloading again")
                 os.makedirs(os.path.dirname(odir+f), exist_ok=True) # Avoid FileNotFoundError: [Errno 2] No such file or directory:
-                fs.get(f, odir+f) # TODO: is fs.download different()? similar times...
+                fs.get(f, odir+f) # TODO: catch s3fs FileNotFoundError
                 logging.info(f"downloaded {f}")
+            ofiles.append(odir+f)
 
     return ofiles
 
