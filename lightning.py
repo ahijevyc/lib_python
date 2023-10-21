@@ -17,12 +17,17 @@ def get_obs(valid_start, valid_end, obsvar, twin, rptdist):
         # Don't expect to find all 30-min blocks within valid time range.
         # If there is no lightning, that 30-min block will be missing.
         # So select with a time slice, not a list of 30-min blocks.
-        # Fill missing blocks with the average of non-missing blocks
-        # in the time window.
         wbugtimes = slice(valid_start, valid_end - pd.Timedelta(minutes=30))
+        expected_times = twin * 2 # 30-min blocks in twin
         cgds = xarray.open_dataset(Path("wbug_lightning") / f"flash.{rptdist}km_30min.nc")
-        if cgds.sel(time_coverage_start=wbugtimes).time_coverage_start.size == 0:
-            logging.warning(f"no wbug times for [{valid_start},{valid_end})")
+        found_times = cgds.sel(time_coverage_start=wbugtimes).time_coverage_start.size
+        if found_times == 0:
+            logging.warning(f"no wbug for [{valid_start},{valid_end})")
+            return None
+        if found_times < expected_times:
+            logging.warning(f"found {found_times}/{expected_times} wbug for [{valid_start},{valid_end})")
+            # If you wish to fill missing blocks with the average of non-missing blocks
+            # in the time window, don't return None now. In other words, comment next line.
             return None
         ds = (
             cgds.sel(time_coverage_start=wbugtimes).mean(dim="time_coverage_start")
@@ -76,3 +81,19 @@ def get_obs(valid_start, valid_end, obsvar, twin, rptdist):
     assert obsvar in ds, f"{obsvar} not in obsgdf. did you assign the correct dataset?"
 
     return ds
+
+def ztfs(x):
+    """
+    zero, ten, forty, seventy
+    round down to one of the probability levels of
+    SPC Enhanced Thunderstorm Outlook
+    """
+    assert x >= 0
+    assert x <= 1
+    if x < 0.1:
+        return 0
+    if x < 0.4:
+        return .1
+    if x < 0.7:
+        return .4
+    return .7
