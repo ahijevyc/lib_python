@@ -1,14 +1,16 @@
-from netCDF4 import Dataset
 import datetime
-import pytz
+import os
 import pdb
 import re
 import sys
-import os
+
+import pytz
+from netCDF4 import Dataset
+
 
 def valid(ncfilename, diagnostic_name):
 
-    nc = Dataset(ncfilename,"r")
+    nc = Dataset(ncfilename, "r")
     try:
         x = nc.variables[diagnostic_name]
     except KeyError:
@@ -18,28 +20,33 @@ def valid(ncfilename, diagnostic_name):
     if 'valid_date' in global_atts:
         valid_time = nc.valid_date
         # convert unicode to datetime object
-        valid_time = datetime.datetime.strptime(valid_time, '%Y-%m-%d_%H:%M:%S')
+        valid_time = datetime.datetime.strptime(
+            valid_time, '%Y-%m-%d_%H:%M:%S')
     elif 'initial_time' in x.ncattrs():
-        initialization_time = datetime.datetime.strptime(x.initial_time, '%m/%d/%Y (%H:%M)')
+        initialization_time = datetime.datetime.strptime(
+            x.initial_time, '%m/%d/%Y (%H:%M)')
         if x.forecast_time_units == 'hours':
-            td = datetime.timedelta(0,0,0,0,0,1)
+            td = datetime.timedelta(0, 0, 0, 0, 0, 1)
         if x.forecast_time_units == '15 minutes':
-            td = datetime.timedelta(0,0,0,0,15,0)
+            td = datetime.timedelta(0, 0, 0, 0, 15, 0)
         if x.forecast_time_units == '30 minutes':
-            td = datetime.timedelta(0,0,0,0,30,0)
+            td = datetime.timedelta(0, 0, 0, 0, 30, 0)
 
         forecast_lead_time = x.forecast_time * td
         valid_time = initialization_time + forecast_lead_time
     elif 'valid_time' in x.ncattrs():
         valid_time = datetime.datetime.strptime(x.valid_time, '%Y%m%d_%H%M%S')
         if 'init_time' in x.ncattrs():
-            initialization_time = datetime.datetime.strptime(x.init_time, '%Y%m%d_%H%M%S')
+            initialization_time = datetime.datetime.strptime(
+                x.init_time, '%Y%m%d_%H%M%S')
         else:
-            print("Found valid_time. Expected init_time attribute too, but found none. Oh well.")
+            print(
+                "Found valid_time. Expected init_time attribute too, but found none. Oh well.")
             initialization_time = None
     elif 'START_DATE' in global_atts:
         # Like ds300 NCAR WRF ensemble diags files
-        initialization_time = datetime.datetime.strptime(nc.START_DATE, '%Y-%m-%d_%H:%M:%S')
+        initialization_time = datetime.datetime.strptime(
+            nc.START_DATE, '%Y-%m-%d_%H:%M:%S')
         basename = os.path.basename(ncfilename)
         # start with "diag", then anything, then _d[0-9][0-9], then _yyyymmddhh, then ...
         m = re.search('diag.*_d\d\d_201\d{7}.*_f(\d\d\d).nc', basename)
@@ -49,7 +56,8 @@ def valid(ncfilename, diagnostic_name):
             forecast_lead_time = datetime.timedelta(hours=fhr)
             valid_time = initialization_time + forecast_lead_time
         else:
-            print("Could not get valid time from "+basename+". Using init time instead")
+            print("Could not get valid time from " +
+                  basename+". Using init time instead")
             valid_time = initialization_time
     else:
         print("don't know how to get time from", ncfilename)
@@ -59,12 +67,13 @@ def valid(ncfilename, diagnostic_name):
     nc.close()
 
     # return time_zone_aware datetimes
-    if initialization_time is not None: # hack for when init_time does not exist (like in accumulated obervations)
+    # hack for when init_time does not exist (like in accumulated obervations)
+    if initialization_time is not None:
         return pytz.utc.localize(valid_time), pytz.utc.localize(initialization_time)
     else:
         return pytz.utc.localize(valid_time), None
 
+
 def init(ncfilename, diagnostic_name):
     valid_time, init_time = valid(ncfilename, diagnostic_name)
     return init_time
-

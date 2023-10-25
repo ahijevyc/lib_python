@@ -3,11 +3,13 @@ get lightning observations
 """
 import logging
 import os
-import pandas as pd
 from pathlib import Path
-from scipy import spatial
-import xarray
+
 import G211
+import pandas as pd
+import xarray
+from scipy import spatial
+
 
 def get_obs(valid_start, valid_end, obsvar, twin, rptdist):
     if obsvar in ["cg", "ic", "cg.ic"]:
@@ -30,7 +32,8 @@ def get_obs(valid_start, valid_end, obsvar, twin, rptdist):
             # in the time window, don't return None now. In other words, comment next line.
             return None
         ds = (
-            cgds.sel(time_coverage_start=wbugtimes).mean(dim="time_coverage_start")
+            cgds.sel(time_coverage_start=wbugtimes).mean(
+                dim="time_coverage_start")
             * (valid_end - valid_start)
             / pd.Timedelta(minutes=30)
         )
@@ -62,21 +65,20 @@ def get_obs(valid_start, valid_end, obsvar, twin, rptdist):
         logging.error(f"unexpected obsvar {obsvar}")
 
     if rptdist == 20:
-        # in the case of rptdist=20 return pts on coarser grid 
+        # in the case of rptdist=20 return pts on coarser grid
         # find nearest indices of 40-km grid.
         lats = G211.x2().lat.ravel()
         lons = G211.x2().lon.ravel()
         x = G211.lon.ravel()
         y = G211.lat.ravel()
-        tree = spatial.KDTree(list(zip(lons,lats)))
-        dist, indices = tree.query(list(zip(x,y)))
-        ltg_sum_coarse = ds.stack(pt=("y","x")).isel(pt=indices)
+        tree = spatial.KDTree(list(zip(lons, lats)))
+        dist, indices = tree.query(list(zip(x, y)))
+        ltg_sum_coarse = ds.stack(pt=("y", "x")).isel(pt=indices)
 
         # replace 40km grid coordinates with 80km grid coordinates
         c = ltg_sum_coarse.coords
-        c.update(G211.mask.stack(pt=("y","x")).coords)
+        c.update(G211.mask.stack(pt=("y", "x")).coords)
         ds = ltg_sum_coarse.assign_coords(c).unstack(dim="pt")
-
 
     assert obsvar in ds, f"{obsvar} not in obsgdf. did you assign the correct dataset?"
 
