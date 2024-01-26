@@ -17,7 +17,6 @@ import pdb
 import re
 from scipy.stats import circmean # for averaging longitudes
 import spc
-from stormevents.nhc import nhc_storms, VortexTrack
 import warnings
 import xarray
 
@@ -288,6 +287,7 @@ class Atcf(pd.DataFrame):
                 if userdefine in row and row[userdefine].strip(): # exists and non-empty
                     userdata = userdefine.replace("define","data")
                     line += "{:s}, ".format(row[userdefine]) # Described as 1-20 chars in atcf doc. 
+                    pdb.set_trace()
                     line += "{:s}, ".format(row[userdata]) # described as 1-100 chars in atcf doc
             # Propagate extra columns
             for extra in extras:
@@ -410,32 +410,20 @@ def iswarmcore(track, min_warmcore_percent=25):
         return warmcore_percent >= min_warmcore_percent
 
 
-def iswind_radii_method(s):
+def iswind_radii_method(s:str):
     # make sure option is 'max', 'azimuthal_mean', or 'xpercentile' where x is a number
     if s == 'max' or s == 'azimuthal_mean':
         return s
-    if s[-10:] != 'percentile':
-        raise argparse.ArgumentTypeError("String must end with 'percentile'")
-    if not float(s[:-10]):
-        raise argparse.ArgumentTypeError("First part of string must be a number")
+    assert s.endswith('percentile'), "String must end with 'percentile'"
+    s = s.replace('percentile','')
+    s = float(s)
     return s
 
 
-def archive_path(atcfname): # used by NARR_composite.py
-    assert atcfname[0:1] in ['a', 'b']
-    basin = atcfname[1:3]
-    cy = atcfname[3:5]
-    year = atcfname[5:9]
-    apath = "/glade/work/ahijevyc/atcf/archive/"+year+"/"+atcfname+".dat"  # provide path to atcf archive
-    return apath 
-
-def cyclone_phase_space_columns():
-    names = []
-    names.append('cpsB') # Cyclone Phase Space "Parameter B" for thermal asymmetry. (Values are *10)
-    names.append('cpsll') # Cyclone Phase Space lower level (600-900 mb) thermal wind parameter, for diagnosing low-level warm core. (Values are *10)
-    names.append('cpsul') # Cyclone Phase Space upper level (300-600 mb) thermal wind parameter, for diagnosing upper-level warm core. (Values are *10)
-    return names 
-
+# 'cpsB':  Cyclone Phase Space "Parameter B" for thermal asymmetry. (Values are *10)
+# 'cpsll':  Cyclone Phase Space lower level (600-900 mb) thermal wind parameter, for diagnosing low-level warm core. (Values are *10)
+# 'cpsul': Cyclone Phase Space upper level (300-600 mb) thermal wind parameter, for diagnosing upper-level warm core. (Values are *10)
+cyclone_phase_space_columns = ["cpsB", "cpsll", "cpsul"] 
 
 
 def V500c(Vmax, latitude_degrees):
@@ -520,6 +508,7 @@ def speed_heading(lon, lat, time):
     return speed, bearing
 
 def get_stormname(df):
+    from stormevents.nhc import VortexTrack
 
     with warnings.catch_warnings():
         warnings.simplefilter(action="ignore", category=FutureWarning)
@@ -824,7 +813,7 @@ def read(ifile, fullcircle=False):
             names[ii] = "space filler" + str(ii-19) # duplicate names not allowed
         names = names[0:35]
         names.append(TPstr)
-        names.extend(cyclone_phase_space_columns())
+        names.extend(cyclone_phase_space_columns)
         names.append('warmcore')
         names.append("warmcore_strength")
         names.append("string1")
@@ -839,7 +828,7 @@ def read(ifile, fullcircle=False):
         logging.info('Using 1st 21 elements of names list')
         names = names[0:21]
         logging.debug('redefining columns 22-31')
-        names.extend(cyclone_phase_space_columns())
+        names.extend(cyclone_phase_space_columns)
         names.append('warmcore')
         names.append('heading')
         names.append('speedms')
@@ -894,7 +883,7 @@ def read(ifile, fullcircle=False):
             converters=converters, na_values=na_values, dtype=dtype, skipinitialspace=True, engine='c') # engine='c' is faster than engine="python"
 
     # fort.64 has asterisks sometimes. Problem with hwrf_tracker. 
-    badlines = df['lon'].str.contains("\*")
+    badlines = df['lon'].str.contains("*", regex=False)
     if any(badlines):
         logging.warning(f"tossing {len(badlines)} lines with asterisk in lon")
         df = df[~badlines]
@@ -1197,8 +1186,13 @@ def debugplot(row, lonCell, latCell, *zs, where=None):
 
     return fig
 
-def derived_winds(u10, v10, mslp, lonCell, latCell, row, vmax_search_radius=250.*units.km, mslp_search_radius=100.*units.km, 
-        wind_radii_method="max", pouter_search_radius=800*units.km, debug=False):
+def derived_winds(u10, v10, mslp, lonCell, latCell,
+        row: pd.Series,
+        vmax_search_radius=250.*units.km,
+        mslp_search_radius=100.*units.km, 
+        wind_radii_method="max",
+        pouter_search_radius=800*units.km,
+        debug=False) -> dict:
     # Given a row (with row.lon and row.lat)...
     # Derive cell distances and bearings
     distance, bearing = dist_bearing(row.lon*degE, row.lat*degN, lonCell, latCell)
@@ -1368,7 +1362,7 @@ def origgrid(df, griddir, ensemble_prefix="ens_", wind_radii_method="max"):
     
     m = re.search(r'EE(\d\d)', model)
     if not m:
-        logging.debug('assume ECMWF ensemble member, but did not find EE\d\d in model string')
+        logging.debug(r'assume ECMWF ensemble member, but did not find EE\d\d in model string')
         logging.debug(f'no original grid for {model} - skipping')
         return df
     ens = int(m.group(1)) # strip leading zero
@@ -1535,7 +1529,7 @@ def veer_track(track, veer):
 
 
 if __name__ == "__main__":
-    df = read(ifile=sys.argv[1])
+    df = read_aswip(ifile=sys.argv[1])
     #df = df.loc[df.valid_time >= pd.to_datetime("20121027")]  # delay the perturbation to SANDY
     #df = df.loc[df.valid_time <= pd.to_datetime("201210311200")]  # truncate end
     perts = np.arange(-2,3,1) * units.parse_expression("deg/day") # directional error
@@ -1543,8 +1537,9 @@ if __name__ == "__main__":
     ofile = f"perts{perts[0].m}-{perts[-1].m}"
     if os.path.exists(ofile+".dat"):
         logging.info(f"{ofile}.dat exists already. Will append")
-    fig, ax = plt.subplots()
-    ax = decorate_ax()
+    plt.figure()
+    ax = plt.axes(projection=cartopy.crs.Mercator())
+    ax = decorate_ax(ax)
     for track_id, track_df in df.groupby(unique_track):
         track_df = interpolate(track_df, '3H')
         logging.info(track_id)
@@ -1553,7 +1548,7 @@ if __name__ == "__main__":
             ptrack["model"] = "PF{:02.0f}".format(PF)
             plot_track(ax, "", ptrack, "{:~3.1f}".format(pert), label_interval_hours=24, scale=0.8)
             write(ofile+".dat", ptrack, append=True)
-    l = TClegend(ax.figure)
+    l = TClegend()
     plt.savefig(ofile + ".png", dpi=200)
     print(ofile+".dat")
     print(ofile+".png")
