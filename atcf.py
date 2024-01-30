@@ -1,5 +1,6 @@
 import cartopy
 from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
+from collections import OrderedDict
 import csv
 import logging
 import math # for math.e
@@ -215,106 +216,102 @@ column_units.update(
 unique_track = ["basin", "cy", "initial_time", "model"]
 
 
-class Atcf(pd.DataFrame):
-    def __init__(self, x):
-        super().__init__(x)
-    # No need for ntrack attribute. Use df.groupby(unique_track).ngroups
+def write(df, ofile, fullcircle=False, append=False):
+    if df.empty:
+        logging.warning("afcf.write(): DataFrame is empty.")
 
-    def write(self, ofile, fullcircle=False, append=False):
-        if self.empty:
-            logging.warning("afcf.write(): DataFrame is empty.")
+    # Ensure wind radii thresholds are in ascending order
+    assert df.groupby(["basin","cy","initial_time", "model", "fhr"]).apply(
+                lambda x : x.rad.is_monotonic_increasing
+            ).all(), "wind radii thresholds not in ascending order"
 
-        # Ensure wind radii thresholds are in ascending order
-        sanity_check = self.sort_values(["basin","cy","initial_time","fhr","rad"])
-        assert self.equals(sanity_check), "wind radii thresholds not in ascending order"
+    models = df["model"].unique()
 
-        models = self["model"].unique()
+    if fullcircle:
+        # deal with fullcircle.
+        df = df.groupby(["basin","cy","initial_time","fhr","rad"]).apply(fullcircle_windradii)
 
-        if fullcircle:
-            # deal with fullcircle.
-            self = self.groupby(["basin","cy","initial_time","fhr","rad"]).apply(fullcircle_windradii)
+    logging.debug(f"writing {models} to {ofile}")
+    logging.debug(df.head(1))
 
-        logging.debug(f"writing {models} to {ofile}")
-        logging.debug(self.head(1))
+    assert 0 not in df.columns, 'TODO: stop putting 0 column'
 
-        assert 0 not in self.columns, 'TODO: stop putting 0 column'
+    # Extra columns not in atcfcolumns.
+    extras = [x for x in df.columns if x not in atcfcolumns]
+    extras.remove("valid_time")
+   
+    
+    atcf_lines = ""
+    for index, row in df.iterrows():
+        line = ""
+        line += "{:2s}, ".format(row.basin) 
+        line += "{:2s}, ".format(row.cy.zfill(2))
+        line += "{:10s}, ".format(row.initial_time.strftime('%Y%m%d%H'))
+        line += "  , " if np.isnan(row.technum) else "{:02.0f}, ".format(row.technum) # avoid turning 'nan' into 3 spaces below
+        line += "{:4s}, ".format(row.model)
+        line += "{:3.0f}, ".format(row.fhr)
+        line += "{:>4s}, ".format(lat2s(row.lat))
+        line += "{:>5s}, ".format(lon2s(row.lon))
+        line += "{:3.0f}, ".format(row.vmax)
+        line += "{:4.0f}, ".format(row.minp)
+        line += "{:2s}, ".format(row.ty)
+        line += "{:>3s}, ".format(row.rad)
+        line += "{:>3s}, ".format(row.windcode)
+        line += "{:4.0f}, ".format(row.rad1)
+        line += "{:4.0f}, ".format(row.rad2)
+        line += "{:4.0f}, ".format(row.rad3)
+        line += "{:4.0f}, ".format(row.rad4)
+        line += "{:4.0f}, ".format(row.pouter)
+        line += "{:4.0f}, ".format(row.router)
+        line += "{:3.0f}, ".format(row.rmw)
+        line += "{:3.0f}, ".format(row.gusts)
+        line += "{:3.0f}, ".format(row.eye)
+        line += "{:>3s}, ".format(row.subregion) # supposedly 1 character, but always 3 in official b-decks
+        line += "{:3.0f}, ".format(row.maxseas)
+        line += "{:>3s}, ".format(row.initials)
+        line += "{:3.0f}, ".format(row.heading)
+        line += "{:3.0f}, ".format(row.speed)
+        line += "{:>10s}, ".format(row.stormname)
+        line += "{:>1s}, ".format(row.depth)
+        line += "{:2.0f}, ".format(row.seas)
+        line += "{:>3s}, ".format(row.seascode)
+        line += "{:4.0f}, ".format(row.seas1)
+        line += "{:4.0f}, ".format(row.seas2)
+        line += "{:4.0f}, ".format(row.seas3)
+        line += "{:4.0f}, ".format(row.seas4)
+        # Propagate optional userdefine columns
+        for userdefine in ["userdefine"+n for n in ['1','2','3','4','5']]:
+            if userdefine in row and row[userdefine].strip(): # exists and non-empty
+                userdata = userdefine.replace("define","data")
+                line += "{:s}, ".format(row[userdefine]) # Described as 1-20 chars in atcf doc. 
+                pdb.set_trace()
+                line += "{:s}, ".format(row[userdata]) # described as 1-100 chars in atcf doc
+        # Propagate extra columns
+        for extra in extras:
+            if extra in row:
+                line += f"{extra}, "
+                line += f"{row[extra]}, "
 
-        # Extra columns not in atcfcolumns.
-        extras = [x for x in self.columns if x not in atcfcolumns]
-        extras.remove("valid_time")
-       
-        
-        atcf_lines = ""
-        for index, row in self.iterrows():
-            line = ""
-            line += "{:2s}, ".format(row.basin) 
-            line += "{:2s}, ".format(row.cy.zfill(2))
-            line += "{:10s}, ".format(row.initial_time.strftime('%Y%m%d%H'))
-            line += "  , " if np.isnan(row.technum) else "{:02.0f}, ".format(row.technum) # avoid turning 'nan' into 3 spaces below
-            line += "{:4s}, ".format(row.model)
-            line += "{:3.0f}, ".format(row.fhr)
-            line += "{:>4s}, ".format(lat2s(row.lat))
-            line += "{:>5s}, ".format(lon2s(row.lon))
-            line += "{:3.0f}, ".format(row.vmax)
-            line += "{:4.0f}, ".format(row.minp)
-            line += "{:2s}, ".format(row.ty)
-            line += "{:>3s}, ".format(row.rad)
-            line += "{:>3s}, ".format(row.windcode)
-            line += "{:4.0f}, ".format(row.rad1)
-            line += "{:4.0f}, ".format(row.rad2)
-            line += "{:4.0f}, ".format(row.rad3)
-            line += "{:4.0f}, ".format(row.rad4)
-            line += "{:4.0f}, ".format(row.pouter)
-            line += "{:4.0f}, ".format(row.router)
-            line += "{:3.0f}, ".format(row.rmw)
-            line += "{:3.0f}, ".format(row.gusts)
-            line += "{:3.0f}, ".format(row.eye)
-            line += "{:>3s}, ".format(row.subregion) # supposedly 1 character, but always 3 in official b-decks
-            line += "{:3.0f}, ".format(row.maxseas)
-            line += "{:>3s}, ".format(row.initials)
-            line += "{:3.0f}, ".format(row.heading)
-            line += "{:3.0f}, ".format(row.speed)
-            line += "{:>10s}, ".format(row.stormname)
-            line += "{:>1s}, ".format(row.depth)
-            line += "{:2.0f}, ".format(row.seas)
-            line += "{:>3s}, ".format(row.seascode)
-            line += "{:4.0f}, ".format(row.seas1)
-            line += "{:4.0f}, ".format(row.seas2)
-            line += "{:4.0f}, ".format(row.seas3)
-            line += "{:4.0f}, ".format(row.seas4)
-            # Propagate optional userdefine columns
-            for userdefine in ["userdefine"+n for n in ['1','2','3','4','5']]:
-                if userdefine in row and row[userdefine].strip(): # exists and non-empty
-                    userdata = userdefine.replace("define","data")
-                    line += "{:s}, ".format(row[userdefine]) # Described as 1-20 chars in atcf doc. 
-                    pdb.set_trace()
-                    line += "{:s}, ".format(row[userdata]) # described as 1-100 chars in atcf doc
-            # Propagate extra columns
-            for extra in extras:
-                if extra in row:
-                    line += f"{extra}, "
-                    line += f"{row[extra]}, "
+        atcf_lines += f"{line}\n"
 
-            atcf_lines += f"{line}\n"
+    # Tried assert "nan," not in atcf_lines, f'found nan, in atcf_lines {atcf_lines}'
+    # but maxseas may be np.nan.
+    atcf_lines = atcf_lines.replace(" nan,","    ,") # possible columns with np.nan all happen to be 3 character columns
 
-        # Tried assert "nan," not in atcf_lines, f'found nan, in atcf_lines {atcf_lines}'
-        # but maxseas may be np.nan.
-        atcf_lines = atcf_lines.replace(" nan,","    ,") # possible columns with np.nan all happen to be 3 character columns
+    mode = "w"
+    if append:
+        mode = "a"
+    if ofile == "<stdout>":
+        sys.stdout.write(atcf_lines)
+    else:
+        f = open(ofile, mode)
+        f.write(atcf_lines)
+        f.close()
 
-        mode = "w"
         if append:
-            mode = "a"
-        if ofile == "<stdout>":
-            sys.stdout.write(atcf_lines)
+            logging.info(f"appended {len(models)} models to {ofile}")
         else:
-            f = open(ofile, mode)
-            f.write(atcf_lines)
-            f.close()
-
-            if append:
-                logging.info(f"appended {len(models)} models to {ofile}")
-            else:
-                logging.info(f"wrote {len(models)} models as {ofile}")
+            logging.info(f"wrote {len(models)} models as {ofile}")
 
 
 def new_besttrack_times(best_track):
@@ -342,10 +339,6 @@ def new_besttrack_times(best_track):
     best_track["fhr"] /= np.timedelta64(1,'s')*3600
     best_track["initial_time"] = first_time
     return best_track
-
-# TODO: is this pointless (putting write in class Atcf)?
-def write(ofile, df, **kwargs):
-    Atcf(df).write(ofile, **kwargs)
 
 
 def decorate_ax(ax, bscale='50m'):
@@ -1072,7 +1065,7 @@ def get_ext_of_wind(wind_speed, distance, bearing, raw_vmax, windcode='NEQ', win
       wind_radii_method : wind_radii_method,
                windcode : windcode,
                raw_vmax : raw_vmax,
-                    rads: {
+                    rads: ordered_dict{
                               wind_threshes[0]:  [rad1,rad2,rad3,rad4],
                               ...
                               wind_threshes[-1]: [rad1,rad2,rad3,rad4],
@@ -1085,7 +1078,7 @@ def get_ext_of_wind(wind_speed, distance, bearing, raw_vmax, windcode='NEQ', win
     wind_radii = {"wind_radii_method":wind_radii_method}
     wind_radii['raw_vmax'] = raw_vmax
     wind_radii['windcode'] = windcode
-    wind_radii['rads'] = {}
+    wind_radii['rads'] = OrderedDict()
     if raw_vmax < wind_threshes[0]:
         wind_radii['rads'][wind_threshes[0]] = [0,0,0,0]*units.km # write out zero rads for first wind threshold and return 
         return wind_radii
@@ -1136,7 +1129,7 @@ def get_ext_of_wind(wind_speed, distance, bearing, raw_vmax, windcode='NEQ', win
                     else:
                         assert wind_radii_method == "max"
                         idist_of_wind_threshold = x_km.argmax(x_km.dims)
-                        wind_radii['rads'][wind_thresh].append(x_km.max().data)
+                        wind_radii['rads'][wind_thresh].append(x_km.isel(idist_of_wind_threshold).data)
                 else:
                     wind_radii['rads'][wind_thresh].append(0.*units.km)
 
@@ -1239,7 +1232,8 @@ def derived_winds(u10, v10, mslp, lonCell, latCell,
 
     # Restrict min mslp search
     mslprad = distance < mslp_search_radius
-    raw_minp = mslp.where(mslprad).min().data
+    iraw_minp = mslp.where(mslprad).argmin(dim=mslp.dims)# .min() drops units, turning Quantity into numpy array
+    raw_minp = mslp.isel(iraw_minp).data 
 
     # Get max extent of wind at thresh_kts thresholds.
     wind_radii = get_ext_of_wind(speed, distance, bearing, raw_vmax, latCell=latCell, lonCell=lonCell, wind_radii_method=wind_radii_method)
@@ -1405,7 +1399,7 @@ def origgrid(df, griddir, ensemble_prefix="ens_", wind_radii_method="max"):
 
 def ECMWFraw_vitals(row, ds, wind_radii_method=None):
     row = row.head(1).squeeze() # make multiple wind rad lines one series. 
-    forecast_time0 = pd.to_timedelta(row.fhr, unit='H')
+    forecast_time0 = pd.to_timedelta(row.fhr, unit='h')
     if forecast_time0 not in ds.forecast_time0:
         print(f"atcf.ECMWFraw_vitals(): fhr {row.fhr} not in original mesh. Dropping time.")
         return None # Don't return squeezed DataFrame (which is a Series now)

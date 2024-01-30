@@ -1,6 +1,7 @@
 """
 get lightning observations
 """
+import cartopy.crs as ccrs
 import logging
 import os
 import pandas as pd
@@ -8,6 +9,26 @@ from pathlib import Path
 from scipy import spatial
 import xarray
 import G211
+import geopandas
+from ml_functions import load_df
+
+def get_obsgdf(args, valid_start, valid_end, obsvar, rptdist):
+    """
+    read lightning observations
+    convert to geopandas DataFrame (obsgdf)
+    """
+    twin = args.twin
+    f = f"{obsvar}_{rptdist}km_{twin}hr"
+    df = load_df(args)
+    df = df[df.valid_time == valid_start + pd.Timedelta(hours=twin / 2)]
+    df = df[[f, "lon", "lat", "x", "y"]].rename(columns={f: obsvar})
+
+    obsgdf = geopandas.GeoDataFrame(
+        df, geometry=geopandas.points_from_xy(df.lon, df.lat)
+    )
+    obsgdf = obsgdf.set_crs(ccrs.PlateCarree())
+
+    return obsgdf
 
 def get_obs(valid_start, valid_end, obsvar, twin, rptdist):
     if obsvar in ["cg", "ic", "cg.ic"]:
