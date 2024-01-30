@@ -208,8 +208,7 @@ def get_storm_reports(
         # Unify "date" and "time" to make a naive datetime object (datetime with no timezone information).
         # The unified column is called "date_time".
         logging.debug(f"read_csv {rpts_file}")
-        rpts = pd.read_csv(rpts_file, parse_dates=[
-                           ['date', 'time']], dtype=dtype, infer_datetime_format=True)
+        rpts = pd.read_csv(rpts_file, parse_dates=[['date', 'time']], dtype=dtype)
         logging.debug(f"read {len(rpts)} lines")
 
         rpts["event_type"] = event_type
