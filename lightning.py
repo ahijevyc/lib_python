@@ -4,10 +4,8 @@ get lightning observations
 import cartopy.crs as ccrs
 import logging
 import os
-import pandas as pd
 from pathlib import Path
-from scipy import spatial
-import xarray
+
 import G211
 import geopandas
 from ml_functions import load_df
@@ -53,7 +51,8 @@ def get_obs(valid_start, valid_end, obsvar, twin, rptdist):
             # in the time window, don't return None now. In other words, comment next line.
             return None
         ds = (
-            cgds.sel(time_coverage_start=wbugtimes).mean(dim="time_coverage_start")
+            cgds.sel(time_coverage_start=wbugtimes).mean(
+                dim="time_coverage_start")
             * (valid_end - valid_start)
             / pd.Timedelta(minutes=30)
         )

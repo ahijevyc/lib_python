@@ -1,26 +1,26 @@
 """get, analyze, plot SPC storm reports"""
 import datetime
+import logging
 import os  # for basename
+import pdb
 import sqlite3
 import sys  # for stderr output
-
-import geopandas
-import logging
-import matplotlib.pyplot as plt
-from metpy.units import units  # used to normalize polarplot range
-import numpy as np
-import pandas as pd
-from pandas.api.types import CategoricalDtype
 from pathlib import Path
-import pdb
-import pytz  # Time zone-aware datetimes
-import requests  # for stormEvents()
-from scipy import spatial, ndimage
-from scipy.stats import circmean  # To average longitudes
-from scipy.stats import gaussian_kde
+
 import cartopy
 import cartopy.geodesic
+import geopandas
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import pytz  # Time zone-aware datetimes
+import requests  # for stormEvents()
 import xarray
+from metpy.units import units  # used to normalize polarplot range
+from pandas.api.types import CategoricalDtype
+from scipy import ndimage, spatial
+from scipy.stats import circmean  # To average longitudes
+from scipy.stats import gaussian_kde
 
 
 def getTCTOR(rename=True):
