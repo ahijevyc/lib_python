@@ -1,5 +1,5 @@
 import cartopy
-from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
+#from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
 from collections import OrderedDict
 import csv
 import logging
@@ -15,6 +15,7 @@ import numpy as np
 import os, sys
 import pandas as pd
 import pdb
+import pint
 import re
 from scipy.stats import circmean # for averaging longitudes
 import spc
@@ -216,21 +217,32 @@ column_units.update(
 unique_track = ["basin", "cy", "initial_time", "model"]
 
 
+def drop_wind_radii_all_zero(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop lines with all zero wind radii if they are r50 or r64"""
+
+    no_r50 = (df.rad == "50") & (df.rad1 == 0) & (df.rad2 == 0) & (df.rad3 == 0) & (df.rad4 == 0)
+    if no_r50.sum():
+        logging.warning(f"dropping {no_r50.sum()} r50 lines with all radii=0")
+        df = df[~no_r50]
+    no_r64 = (df.rad == "64") & (df.rad1 == 0) & (df.rad2 == 0) & (df.rad3 == 0) & (df.rad4 == 0)
+    if no_r64.sum():
+        logging.warning(f"dropping {no_r64.sum()} r64 lines with all radii=0")
+        df = df[~no_r64]
+
+    return df
+
+
 def write(df, ofile, fullcircle=False, append=False):
     if df.empty:
         logging.warning("afcf.write(): DataFrame is empty.")
 
-    # Ensure wind radii thresholds are in ascending order
+    # assert wind radii thresholds are in ascending order
     assert df.groupby(["basin","cy","initial_time", "model", "fhr"]).apply(
                 lambda x : x.rad.is_monotonic_increasing
             ).all(), "wind radii thresholds not in ascending order"
 
+
     models = df["model"].unique()
-
-    if fullcircle:
-        # deal with fullcircle.
-        df = df.groupby(["basin","cy","initial_time","fhr","rad"]).apply(fullcircle_windradii)
-
     logging.debug(f"writing {models} to {ofile}")
     logging.debug(df.head(1))
 
@@ -239,7 +251,11 @@ def write(df, ofile, fullcircle=False, append=False):
     # Extra columns not in atcfcolumns.
     extras = [x for x in df.columns if x not in atcfcolumns]
     extras.remove("valid_time")
-   
+
+    # warn if r50 or r64 line has wind radii all zero
+    for r in [50,64]:
+        radii_all_zero = (df.rad.astype(int) == r) & (df.rad1 == 0) & (df.rad2 == 0) & (df.rad3 == 0) & (df.rad4 == 0)
+        assert radii_all_zero.sum() == 0, f"Found {radii_all_zero.sum()} r{r} lines with all radii=0"
     
     atcf_lines = ""
     for index, row in df.iterrows():
@@ -354,15 +370,17 @@ def decorate_ax(ax, bscale='50m'):
             facecolor=idl_water_color,
             alpha=alpha)
 
-    ax.add_feature(ocean) 
+    #ax.add_feature(ocean) 
+    ax.set_aspect("auto")
     ax.add_feature(countries, edgecolor='gray', lw=0.375)
     ax.add_feature(cartopy.feature.LAKES, facecolor=idl_water_color, alpha=alpha)
     ax.add_feature(cartopy.feature.STATES.with_scale(bscale), lw=0.25, edgecolor='gray')
-    gl = ax.gridlines(crs=cartopy.crs.PlateCarree(), draw_labels=True, 
-            x_inline=False, color="gray", linestyle='--', alpha=alpha)
-    gl.xformatter = LONGITUDE_FORMATTER
-    gl.top_labels = False # Don't overwrite title
-    gl.yformatter = LATITUDE_FORMATTER
+    # commented out gridlines because if you try creating another gridliner, it is hard to set parameters on it.
+    #gl = ax.gridlines(crs=cartopy.crs.PlateCarree(), draw_labels=True, 
+    #        x_inline=False, color="gray", linestyle='--', alpha=alpha)
+    #gl.xformatter = LONGITUDE_FORMATTER
+    #gl.top_labels = False # Don't overwrite title
+    #gl.yformatter = LATITUDE_FORMATTER
     #gl.xlabel_style = {"size":16} # "small" or other strings has no effect
     #gl.ylabel_style = {"size":16}
         
@@ -418,37 +436,72 @@ def iswind_radii_method(s:str):
 # 'cpsul': Cyclone Phase Space upper level (300-600 mb) thermal wind parameter, for diagnosing upper-level warm core. (Values are *10)
 cyclone_phase_space_columns = ["cpsB", "cpsll", "cpsul"] 
 
-
-def V500c(Vmax, latitude_degrees):
-    # Climatological tangential wind 500 km from the center 
+def V500c(Vmax: pint.Quantity, latitude: pint.Quantity) -> pint.Quantity:
+    # Climatological tangential wind 500 km from the center
     # Zehr and Knaff, equations 4, 5, 6
     # https://journals.ametsoc.org/waf/article/22/1/71/38805/Reexamination-of-Tropical-Cyclone-Wind-Pressure
-    Vmax_knots = Vmax.to("knots").m 
-    shape_factor_x = 0.1147 + 0.0055 * Vmax_knots - 0.001 * (latitude_degrees - 25.)
-    Rmax = 66.785 - 0.09102 * Vmax_knots + 1.0619 * (latitude_degrees - 25.)
-    climatological_tangential_wind_500_km_from_the_center = Vmax_knots * (Rmax/500.)**shape_factor_x
+    # Added units so shape_factor_x is dimensionless
+    # Make sure you subtract 25.0 * degN and not just 25.0 or elsel it assumes 25 is in radians and you get
+    # radians in return.
+    shape_factor_x = 0.1147 + 0.0055 / kt * Vmax - 0.001 / degN * (latitude - 25.0 * degN)
+    Rmax = (
+        66.785 * units.km
+        - 0.09102 * units.km / kt * Vmax
+        + 1.0619 * units.km / degN * (latitude - 25.0 * degN)
+    )
+    climatological_tangential_wind_500_km_from_the_center = (
+        Vmax * (Rmax / (500.0 * units.km)) ** shape_factor_x
+    )
 
-    if np.ndim(Vmax_knots) == 0: # deal with scalar
-        if Vmax_knots < 15.:
-            return Vmax_knots
-    else: # deal with iterables
-        if any(Vmax_knots < 15.):
-            logging.info("atcf.V500c(): leaving Vmax < 15 unchanged")
-            climatological_tangential_wind_500_km_from_the_center[Vmax_knots < 15] = Vmax_knots[Vmax_knots < 15]
-    return climatological_tangential_wind_500_km_from_the_center * kt
+    if np.ndim(Vmax) == 0:  # deal with scalar
+        if Vmax < 15.0 * kt:
+            return Vmax
+    else:  # deal with iterables
+        if any(Vmax < 15.0 * kt):
+            logging.info("atcf.V500c(): leave Vmax < 15kt unchanged")
+            climatological_tangential_wind_500_km_from_the_center[Vmax < 15 * kt] = Vmax[
+                Vmax < 15 * kt
+            ]
+    return climatological_tangential_wind_500_km_from_the_center
 
-def Knaff_Zehr_Pmin(Vsrm1, storm_size_S, latitude_degrees, environmental_pressure):
-    # Equation 1 in Courtney and Knaff http://rammb.cira.colostate.edu/resources/docs/Courtney&Knaff_2009.pdf
-    #environmental_pressure_hPa = environmental_pressure.to("hPa").m
-    #Vsrm1_knots = Vsrm1.to("knots").m
-    #Pc = 23.286 - 0.483 * Vsrm1_knots - ( Vsrm1_knots/24.254 )**2. - 12.587*storm_size_S - 0.483*latitude_degrees + environmental_pressure_hPa
-    # unitize coefficients so Vsrm1, latitude, environmental_pressure can be in any units
-    Pc = 23.286*hPa - 0.483*units.parse_expression("hPa/knot") * Vsrm1 - ( Vsrm1/(24.254*units.parse_expression("knot * hPa**-0.5")) )**2. - 12.587*hPa*storm_size_S - 0.483*units.parse_expression("hPa/degrees_N")*latitude_degrees + environmental_pressure
+def Knaff_Zehr_Pmin(
+    Vsrm1: pint.Quantity,
+    storm_size_S: pint.Quantity,
+    latitude: pint.Quantity,
+    environmental_pressure: pint.Quantity,
+) -> pint.Quantity:
+    """
+    Eq 1 in Courtney and Knaff http://rammb.cira.colostate.edu/resources/docs/Courtney&Knaff_2009.pdf
+    Unitize coefficients so Vsrm1, latitude, environmental_pressure can have any units
+    """
+    Pc = (
+        23.286 * hPa
+        - 0.483 * hPa / kt * Vsrm1
+        - (Vsrm1 / (24.254 * kt / units.parse_expression("hPa**0.5"))) ** 2.0
+        - 12.587 * hPa * storm_size_S
+        - 0.483 * hPa / degN * latitude
+        + environmental_pressure
+    )
     return Pc
 
-def Vsrm(Vmax, storm_motion_C):
-    # TODO: Replace NaN with zero?
-    # Vmax and storm_motion_C are unitized speeds. Doesn't matter what units.
+def Vsrm1(Vmax: pint.Quantity, storm_motion_C: pint.Quantity) -> pint.Quantity:
+    """Eq 2 in Courtney and Knaff (2009)
+    1-min average Vmax adjusted for storm motion
+
+    Parameters
+    ----------
+    Vmax : pint.Quantity
+        1-min average Vmax
+    storm_motion_C : pint.Quantity
+        storm motion
+
+    Returns
+    -------
+    quantity : pint.Quantity
+
+    TODO: Replace NaN with zero?
+    Vmax and storm_motion_C are unitized speeds. Doesn't matter what units.
+    """
     return Vmax - 1.5 * kt**(1-0.63) * storm_motion_C**0.63 
 
 def fill_speed_heading(track):
@@ -557,14 +610,14 @@ def mean_track(df):
     df["model"] = "MEAN"
     return df
 
-def plot_track(ax, start_label,group,end_label, scale=1,
+def plot_track(ax,
+        start_label,group,end_label, scale=1,
         label_interval_hours=1, onecolor=None,
-        linestyle="solid", label=None,
-        alpha=1):
+        label=None,
+        **kwargs):
     logging.debug(f"plot_track: {start_label} {group}")
     group = group.sort_values("valid_time")
 
-    segment = []
     lformat = None
     group["TCcategory"] = [vmax2category(x*kt) for x in group.vmax]
     group["color"] = [colors[c] for c in group["TCcategory"]]
@@ -607,9 +660,9 @@ def plot_track(ax, start_label,group,end_label, scale=1,
             lons[lons < 0] += 360
         logging.debug(f"{i} plot segment {lons} {lats}")
         
-        segment, = ax.plot(lons, lats, c=color, lw=lw*scale,
-                transform=cartopy.crs.PlateCarree(), linestyle=linestyle,
-                label=label, alpha=alpha)
+        ax.plot(lons, lats, c=color,
+                transform=cartopy.crs.PlateCarree(),
+                label=label, **kwargs)
 
     if label_interval_hours is None:
         return ax
@@ -617,8 +670,8 @@ def plot_track(ax, start_label,group,end_label, scale=1,
     # outside segment loop so it remains on top of segments
     for i, row in group[group.valid_time.dt.hour % label_interval_hours == 0].iterrows():
         color = row.color
-        ax.plot(row.lon, row.lat, 'o', markersize=scale*5, markerfacecolor=color, color=color,
-                transform=cartopy.crs.PlateCarree(), alpha=alpha)
+        ax.plot(row.lon, row.lat, 'o', markersize=scale*3, markerfacecolor=color, color=color,
+                transform=cartopy.crs.PlateCarree(), **kwargs)
         lformat = "%-d"
         if row.valid_time.hour != 0:
             lformat = "%-Hz"
@@ -627,7 +680,7 @@ def plot_track(ax, start_label,group,end_label, scale=1,
                 ha='center',va='center_baseline',fontsize=scale*4, transform=cartopy.crs.PlateCarree())
     return ax
 
-def TClegend(shrink=1, fraction=0.02, pad=0.03):
+def TClegend(shrink=10, fraction=0.02, pad=0.03):
     n = len(colors)
     cbar=plt.cm.ScalarMappable(norm=mcolors.Normalize(vmin=0,vmax=n), cmap=cmap)
     ax = plt.gcf().get_axes() # all the axes (1 or more)
@@ -701,7 +754,7 @@ def expand_wind_radii(df, rads=['34','50','64']):
     df = df.set_index("rad").reindex(rads)
     # first fill missing rad1-4 and seas1-4 with zeros before forward-filling na's
     df[rscols] = df[rscols].fillna(value=0)
-    df = df.fillna(method='ffill')
+    df = df.ffill()
     return df
 
 def return_expandedwindradii(df, rads=["34","50","64"]):
@@ -916,10 +969,6 @@ def read(ifile, fullcircle=False):
     # Add missing ATCF columns with dummy data.
     df = add_missing_dummy_columns(df, atcfcolumns)
 
-    if fullcircle:
-        # Full circle wind radii instead of quadrants
-        df = df.groupby(["basin","cy","initial_time","fhr","rad"]).apply(fullcircle_windradii)
-
     missing_speed_heading = all(((df.speed == 0) | pd.isnull(df.speed)) & ((df.heading == 0) | pd.isnull(df.heading))) # assume bad if everything is zero
     if missing_speed_heading:
         logging.debug("derive speed and heading")
@@ -1091,7 +1140,7 @@ def get_ext_of_wind(wind_speed, distance, bearing, raw_vmax, windcode='NEQ', win
     wind_speed = wind_speed.where(distance < rad_search_radius)
 
     logging.debug(f'  get_ext_of_wind(): method {wind_radii_method} windcode {windcode}')
-    logging.debug('  get_ext_of_wind(): wind_thresh     azimuth       npts    dist   bearing      lat        lon')
+    logging.debug( '  get_ext_of_wind(): wind_thresh     azimuth       npts    dist   bearing      lat        lon')
 
     for wind_thresh in wind_threshes:
         if (wind_speed >= wind_thresh).sum() == 0:
@@ -1266,21 +1315,11 @@ def derived_winds(u10, v10, mslp, lonCell, latCell,
             "wind_radii"   : wind_radii, 
             "raw_pouter"   : raw_pouter,
             "raw_router"   : raw_router,
-            "Vt_500km"     : Vt_500km, # used for Zehr and Knaff Pmin derivation.
+            "Vt_500km"     : Vt_500km, # used for Zehr and Knaff Pmin derivation if storm_size_S not already calculated.
             "storm_size_S" : storm_size_S.to_base_units(), # used for Zehr and Knaff Pmin derivation.
             "penv"         : penv # used for Zehr and Knaff Pmin derivation.
             }
     return derived_winds_dict
-
-def fullcircle_windradii(row):
-    # full circle 34, 50, or 64 knot radius (max of rad1-rad4)
-    # MET-TC will not derive this on its own - see email from John Halley-Gotway Oct 11, 2018
-    # Probably shouldn't have AAA and NEQ in same file. 
-    row.windcode = 'AAA'
-    rads = row[['rad1','rad2','rad3','rad4']]
-    row.rad1 = np.nanmax(rads) # rad1 is the maximum of rad1-rad4
-    row[['rad2','rad3','rad4']] = np.nan # the rest are nans
-    return row
 
 
 def add_wind_rad_lines(row, wind_radii):
