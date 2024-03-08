@@ -12,6 +12,7 @@ import G211
 import geopandas
 from ml_functions import load_df
 
+
 def get_obsgdf(args, valid_start, valid_end, obsvar, rptdist):
     """
     read lightning observations
@@ -23,12 +24,11 @@ def get_obsgdf(args, valid_start, valid_end, obsvar, rptdist):
     df = df[df.valid_time == valid_start + pd.Timedelta(hours=twin / 2)]
     df = df[[f, "lon", "lat", "x", "y"]].rename(columns={f: obsvar})
 
-    obsgdf = geopandas.GeoDataFrame(
-        df, geometry=geopandas.points_from_xy(df.lon, df.lat)
-    )
+    obsgdf = geopandas.GeoDataFrame(df, geometry=geopandas.points_from_xy(df.lon, df.lat))
     obsgdf = obsgdf.set_crs(ccrs.PlateCarree())
 
     return obsgdf
+
 
 def get_obs(valid_start, valid_end, obsvar, twin, rptdist):
     if obsvar in ["cg", "ic", "cg.ic"]:
@@ -39,14 +39,16 @@ def get_obs(valid_start, valid_end, obsvar, twin, rptdist):
         # If there is no lightning, that 30-min block will be missing.
         # So select with a time slice, not a list of 30-min blocks.
         wbugtimes = slice(valid_start, valid_end - pd.Timedelta(minutes=30))
-        expected_times = twin * 2 # 30-min blocks in twin
+        expected_times = twin * 2  # 30-min blocks in twin
         cgds = xarray.open_dataset(Path("wbug_lightning") / f"flash.{rptdist}km_30min.nc")
         found_times = cgds.sel(time_coverage_start=wbugtimes).time_coverage_start.size
         if found_times == 0:
             logging.warning(f"no wbug for [{valid_start},{valid_end})")
             return None
         if found_times < expected_times:
-            logging.warning(f"found {found_times}/{expected_times} wbug for [{valid_start},{valid_end})")
+            logging.warning(
+                f"found {found_times}/{expected_times} wbug for [{valid_start},{valid_end})"
+            )
             # If you wish to fill missing blocks with the average of non-missing blocks
             # in the time window, don't return None now. In other words, comment next line.
             return None
@@ -83,38 +85,48 @@ def get_obs(valid_start, valid_end, obsvar, twin, rptdist):
         logging.error(f"unexpected obsvar {obsvar}")
 
     if rptdist == 20:
-        # in the case of rptdist=20 return pts on coarser grid 
+        # in the case of rptdist=20 return pts on coarser grid
         # find nearest indices of 40-km grid.
         lats = G211.x2().lat.ravel()
         lons = G211.x2().lon.ravel()
         x = G211.lon.ravel()
         y = G211.lat.ravel()
-        tree = spatial.KDTree(list(zip(lons,lats)))
-        dist, indices = tree.query(list(zip(x,y)))
-        ltg_sum_coarse = ds.stack(pt=("y","x")).isel(pt=indices)
+        tree = spatial.KDTree(list(zip(lons, lats)))
+        dist, indices = tree.query(list(zip(x, y)))
+        ltg_sum_coarse = ds.stack(pt=("y", "x")).isel(pt=indices)
 
         # replace 40km grid coordinates with 80km grid coordinates
         c = ltg_sum_coarse.coords
-        c.update(G211.mask.stack(pt=("y","x")).coords)
+        c.update(G211.mask.stack(pt=("y", "x")).coords)
         ds = ltg_sum_coarse.assign_coords(c).unstack(dim="pt")
-
 
     assert obsvar in ds, f"{obsvar} not in obsgdf. did you assign the correct dataset?"
 
     return ds
 
-def ztfs(x):
+
+def ztfs(x, how="nearest"):
     """
     zero, ten, forty, seventy
-    round down to one of the probability levels of
-    SPC Enhanced Thunderstorm Outlook
+    If how="floor", round x DOWN to nearest probability level of
+    SPC Thunderstorm Outlook.
+    If how="nearest", round x to nearest (down OR up).
     """
     assert x >= 0
     assert x <= 1
-    if x < 0.1:
-        return 0
-    if x < 0.4:
-        return .1
-    if x < 0.7:
-        return .4
-    return .7
+    if how == "floor":
+        if x < 0.1:
+            return 0
+        if x < 0.4:
+            return 0.1
+        if x < 0.7:
+            return 0.4
+        return 0.7
+    if how == "nearest":
+        if x < 0.05:
+            return 0
+        if x < 0.25:
+            return 0.1
+        if x < 0.55:
+            return 0.4
+        return 0.7
