@@ -26,7 +26,6 @@ import xarray
 from cartopy.mpl.gridliner import LATITUDE_FORMATTER, LONGITUDE_FORMATTER
 from metpy.units import units
 from scipy.stats import circmean  # for averaging longitudes
-from stormevents.nhc import VortexTrack, nhc_storms
 
 basin_bounds = {
     "al": (-99, -22, 0, 38),
@@ -708,16 +707,16 @@ def plot_track(ax,
             lformat = "%-Hz"
         d = ax.text(row.lon, row.lat, row.valid_time.strftime(lformat),
                     color=contrasting_color(color), clip_box=ax.bbox, clip_on=True,
-                    ha='center', va='center_baseline', fontsize=scale*4, transform=cartopy.crs.PlateCarree())
+                    ha='center', va='center_baseline', fontsize=scale*3.6, transform=cartopy.crs.PlateCarree())
     return ax
 
-def TClegend(shrink=10, fraction=0.02, pad=0.03):
+def TClegend(**kwargs):
     n = len(colors)
+    ax = plt.gcf().get_axes()  # all the axes (1 or more)
     cbar = plt.cm.ScalarMappable(
         norm=mcolors.Normalize(vmin=0, vmax=n), cmap=cmap)
-    ax = plt.gcf().get_axes()  # all the axes (1 or more)
     axCbar = plt.colorbar(cbar, ax=ax, orientation="horizontal", drawedges=True,
-                          shrink=shrink, fraction=fraction, pad=pad)
+                          **kwargs)
     axCbar.set_ticks(np.array(range(n))+0.5)
     axCbar.set_ticklabels(colors.keys())
     return axCbar
@@ -1436,7 +1435,7 @@ def origgridWRF(df, griddir, grid="d03", wind_radii_method="max"):
 
     # assert this is a single track
     assert df.groupby(['basin', 'cy', 'initial_time', 'model']
-                      ).ngroups == 1, 'mpas.origmesh got more than 1 track'
+                      ).ngroups == 1, 'got more than 1 track'
     basin, cy, initial_time, model = df.iloc[0][[
         'basin', 'cy', 'initial_time', 'model']]
 
@@ -1496,7 +1495,7 @@ def origgrid(df, griddir, ensemble_prefix="ens_", wind_radii_method="max"):
 
     # assert this is a single track
     assert df.groupby(['basin', 'cy', 'initial_time', 'model']
-                      ).ngroups == 1, 'mpas.origmesh got more than 1 track'
+                      ).ngroups == 1, 'got more than 1 track'
     basin, cy, initial_time, model = df.iloc[0][[
         'basin', 'cy', 'initial_time', 'model']]
 
@@ -1508,7 +1507,7 @@ def origgrid(df, griddir, ensemble_prefix="ens_", wind_radii_method="max"):
     m = re.search(r'EE(\d\d)', model)
     if not m:
         logging.debug(
-            'assume ECMWF ensemble member, but did not find EE\d\d in model string')
+            'assume ECMWF ensemble member, but did not find EE\\d\\d in model string')
         logging.debug(f'no original grid for {model} - skipping')
         return df
     ens = int(m.group(1))  # strip leading zero
