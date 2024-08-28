@@ -9,6 +9,8 @@ import cartopy.crs as ccrs
 import geopandas
 import pandas as pd
 from matplotlib.colors import ListedColormap
+from scipy import spatial
+import xarray
 
 import G211
 import nclcmaps
@@ -18,7 +20,7 @@ test = nclcmaps.colors["MPL_Greys"][6:-25:] + nclcmaps.colors["MPL_Reds"]
 cmap = ListedColormap(test, "GreysReds")
 
 
-def get_obsgdf(args, valid_start, valid_end, obsvar, rptdist):
+def get_obsgdf(args, valid_start, obsvar, rptdist):
     """
     read lightning observations
     convert to geopandas DataFrame (obsgdf)
@@ -122,17 +124,19 @@ def ztfs(x, how="nearest"):
     eps = 1e-12
     if how == "floor":
         if x < 0.1:
-            return 0
+            i = 0
         if x < 0.4:
-            return 0.1 + eps # avoid floating point 0.1->0.099999999
+            i = 0.1 + eps # avoid floating point 0.1->0.099999999
         if x < 0.7:
-            return 0.4
-        return 0.7
-    if how == "nearest":
+            i = 0.4
+        i = 0.7
+    else:
+        assert how == "nearest"
         if x < 0.05:
-            return 0
+            i = 0
         if x < 0.25:
-            return 0.1 + eps
+            i = 0.1 + eps
         if x < 0.55:
-            return 0.4
-        return 0.7
+            i = 0.4
+        i = 0.7
+    return i

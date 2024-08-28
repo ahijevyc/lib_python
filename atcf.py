@@ -1,31 +1,27 @@
-import cartopy
-#from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
+""" tools to work with atcf """
 from collections import OrderedDict
 import csv
-import datetime
 import logging
-import math  # for math.e
 import os
 import pdb
-import pint
 import re
-from scipy.stats import circmean # for averaging longitudes
-import spc
+import sys
 import warnings
 
 import cartopy
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
-import matplotlib.ticker
 import metpy.calc
 import metpy.constants
+from metpy.units import units
+from metpy.constants import earth_avg_radius
 import numpy as np
 import pandas as pd
-import spc
+import pint
 import xarray
-from cartopy.mpl.gridliner import LATITUDE_FORMATTER, LONGITUDE_FORMATTER
-from metpy.units import units
 from scipy.stats import circmean  # for averaging longitudes
+
+import spc
 
 basin_bounds = {
     "al": (-99, -22, 0, 38),
@@ -48,11 +44,6 @@ deg = units.parse_expression("degree")
 kt = units.parse_expression("knot")
 hPa = units.parse_expression("hPa")
 nmi = units.parse_expression("nautical_mile")
-
-# Ellipsoid [CLARKE 1866]  Semi-Major Axis (Equatorial Radius)
-# Rearth = 6378.2064 * units.km
-Rearth = metpy.constants.earth_avg_radius
-
 
 # colors from tropicalatlantic.com
 #           TD         TD            TS           CAT1          CAT2          CAT3         CAT4         CAT5
@@ -172,7 +163,6 @@ na_values = {
     "seas2": 4*' ',
     "seas3": 4*' ',
     "seas4": 4*' ',
-    "seas4": 4*' ',
     "HollandB": 'Infinity',
     "B1": 'Infinity',
     "B2": 'Infinity',
@@ -244,7 +234,7 @@ def drop_wind_radii_all_zero(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def write(df, ofile, fullcircle=False, append=False):
+def write(df, ofile, append=False):
     if df.empty:
         logging.warning("afcf.write(): DataFrame is empty.")
 
@@ -268,11 +258,11 @@ def write(df, ofile, fullcircle=False, append=False):
     for r in [50,64]:
         radii_all_zero = (df.rad.astype(int) == r) & (df.rad1 == 0) & (df.rad2 == 0) & (df.rad3 == 0) & (df.rad4 == 0)
         assert radii_all_zero.sum() == 0, f"Found {radii_all_zero.sum()} r{r} lines with all radii=0"
-    
+
     atcf_lines = ""
     for index, row in df.iterrows():
         line = ""
-        line += "{:2s}, ".format(row.basin) 
+        line += "{:2s}, ".format(row.basin)
         line += "{:2s}, ".format(row.cy.zfill(2))
         line += "{:10s}, ".format(row.initial_time.strftime('%Y%m%d%H'))
         line += "  , " if np.isnan(row.technum) else "{:02.0f}, ".format(row.technum) # avoid turning 'nan' into 3 spaces below
@@ -311,8 +301,7 @@ def write(df, ofile, fullcircle=False, append=False):
         for userdefine in ["userdefine"+n for n in ['1','2','3','4','5']]:
             if userdefine in row and row[userdefine].strip(): # exists and non-empty
                 userdata = userdefine.replace("define","data")
-                line += "{:s}, ".format(row[userdefine]) # Described as 1-20 chars in atcf doc. 
-                pdb.set_trace()
+                line += "{:s}, ".format(row[userdefine]) # Described as 1-20 chars in atcf doc.
                 line += "{:s}, ".format(row[userdata]) # described as 1-100 chars in atcf doc
         # Propagate extra columns
         for extra in extras:
@@ -332,9 +321,8 @@ def write(df, ofile, fullcircle=False, append=False):
     if ofile == "<stdout>":
         sys.stdout.write(atcf_lines)
     else:
-        f = open(ofile, mode)
-        f.write(atcf_lines)
-        f.close()
+        with open(ofile, mode) as f:
+            f.write(atcf_lines)
 
         if append:
             logging.info(f"appended {len(models)} models to {ofile}")
@@ -385,20 +373,13 @@ def decorate_ax(ax, bscale='50m'):
                                                 facecolor=idl_water_color,
                                                 alpha=alpha)
 
-    #ax.add_feature(ocean) 
+    #ax.add_feature(ocean)
     ax.set_aspect("auto")
     ax.add_feature(countries, edgecolor='gray', lw=0.375)
     ax.add_feature(cartopy.feature.LAKES, facecolor=idl_water_color, alpha=alpha)
     ax.add_feature(cartopy.feature.STATES.with_scale(bscale), lw=0.25, edgecolor='gray')
     # commented out gridlines because if you try creating another gridliner, it is hard to set parameters on it.
-    #gl = ax.gridlines(crs=cartopy.crs.PlateCarree(), draw_labels=True, 
-    #        x_inline=False, color="gray", linestyle='--', alpha=alpha)
-    #gl.xformatter = LONGITUDE_FORMATTER
-    #gl.top_labels = False # Don't overwrite title
-    #gl.yformatter = LATITUDE_FORMATTER
-    #gl.xlabel_style = {"size":16} # "small" or other strings has no effect
-    #gl.ylabel_style = {"size":16}
-        
+
     return ax
 
 
@@ -432,14 +413,13 @@ def iswarmcore(track, min_warmcore_percent=25):
     if any(track.warmcore.str.strip() == 'U'):
         logging.warning("warm core unknown")
         return True
-    else:
-        warmcore_percent = 100*warmcore.sum()/known.sum()
-        return warmcore_percent >= min_warmcore_percent
+    warmcore_percent = 100*warmcore.sum()/known.sum()
+    return warmcore_percent >= min_warmcore_percent
 
 
 def iswind_radii_method(s:str):
     # make sure option is 'max', 'azimuthal_mean', or 'xpercentile' where x is a number
-    if s == 'max' or s == 'azimuthal_mean':
+    if s in ('max', 'azimuthal_mean'):
         return s
     assert s.endswith('percentile'), "String must end with 'percentile'"
     s = s.replace('percentile','')
@@ -450,7 +430,7 @@ def iswind_radii_method(s:str):
 # 'cpsB':  Cyclone Phase Space "Parameter B" for thermal asymmetry. (Values are *10)
 # 'cpsll':  Cyclone Phase Space lower level (600-900 mb) thermal wind parameter, for diagnosing low-level warm core. (Values are *10)
 # 'cpsul': Cyclone Phase Space upper level (300-600 mb) thermal wind parameter, for diagnosing upper-level warm core. (Values are *10)
-cyclone_phase_space_columns = ["cpsB", "cpsll", "cpsul"] 
+cyclone_phase_space_columns = ["cpsB", "cpsll", "cpsul"]
 
 def V500c(Vmax: pint.Quantity, latitude: pint.Quantity) -> pint.Quantity:
     # Climatological tangential wind 500 km from the center
@@ -518,7 +498,7 @@ def Vsrm1(Vmax: pint.Quantity, storm_motion_C: pint.Quantity) -> pint.Quantity:
     TODO: Replace NaN with zero?
     Vmax and storm_motion_C are unitized speeds. Doesn't matter what units.
     """
-    return Vmax - 1.5 * kt**(1-0.63) * storm_motion_C**0.63 
+    return Vmax - 1.5 * kt**(1-0.63) * storm_motion_C**0.63
 
 def fill_speed_heading(track):
     assert track.groupby(
@@ -676,7 +656,6 @@ def plot_track(ax,
             row1 = group.iloc[i+1]
         lat0 = (row_1.lat + row.lat) / 2.
         lon0 = circmean([row_1.lon, row.lon], low=-180, high=180)
-        lw = 1.5
         lat1 = (row.lat + row1.lat) / 2.
         lon1 = circmean([row.lon, row1.lon], low=-180, high=180)
         color = row.color
@@ -689,7 +668,7 @@ def plot_track(ax,
             logging.warning(f"{row.cy} spans dateline")
             lons[lons < 0] += 360
         logging.debug(f"{i} plot segment {lons} {lats}")
-        
+
         ax.plot(lons, lats, c=color,
                 transform=cartopy.crs.PlateCarree(),
                 label=label, **kwargs)
@@ -705,9 +684,9 @@ def plot_track(ax,
         lformat = "%-d"
         if row.valid_time.hour != 0:
             lformat = "%-Hz"
-        d = ax.text(row.lon, row.lat, row.valid_time.strftime(lformat),
-                    color=contrasting_color(color), clip_box=ax.bbox, clip_on=True,
-                    ha='center', va='center_baseline', fontsize=scale*3.6, transform=cartopy.crs.PlateCarree())
+        ax.text(row.lon, row.lat, row.valid_time.strftime(lformat),
+                color=contrasting_color(color), clip_box=ax.bbox, clip_on=True,
+                ha='center', va='center_baseline', fontsize=scale*3.6, transform=cartopy.crs.PlateCarree())
     return ax
 
 def TClegend(**kwargs):
@@ -755,7 +734,7 @@ def interpolate(df, interval):
         df.dropna(how='all', subset=['valid_time'], inplace=True)
 
     # Include 34, 50 and 64 knot wind radii for each time, so missing radii are explicitly zero km when interpolating.
-    df = return_expandedwindradii(df)
+    df = return_expandedwindradii(df, wind_threshes.m.astype(str))
 
     # Interpolate in time
     # handle multiple models, init_times, etc.
@@ -783,27 +762,27 @@ def stringlatlon2float(slon, slat):
     return lon, lat
 
 
-# rad1-4 and seas1-4 columns
-rscols = []
-for f in ["rad", "seas"]:
-    for r in ["1", "2", "3", "4"]:
-        rscols.append(f+r)
 
-
-def expand_wind_radii(df, rads=['34', '50', '64']):
+def expand_wind_radii(df, rads):
     """ Define all wind radii, regardless of wind speed. """
+    # rad1-4 and seas1-4 columns
+    rad_seas = []
+    for f in ["rad", "seas"]:
+        for r in ["1", "2", "3", "4"]:
+            rad_seas.append(f+r)
+
     df = df.set_index("rad").reindex(rads)
     # first fill missing rad1-4 and seas1-4 with zeros before forward-filling na's
-    df[rscols] = df[rscols].fillna(value=0)
+    df[rad_seas] = df[rad_seas].fillna(value=0)
     df = df.ffill()
     return df
 
 
-def return_expandedwindradii(df, rads=["34", "50", "64"]):
+def return_expandedwindradii(df, rads):
     """change 0kt to 34kt"""
     df.loc[df["rad"] == "0", "rad"] = "34"
     df = df.groupby(['basin', 'cy', 'initial_time', 'model', 'fhr'],
-                    group_keys=False).apply(expand_wind_radii, rads=rads)
+                    group_keys=False).apply(expand_wind_radii, rads)
     df = df.reset_index()  # return index (rad) to column
     return df
 
@@ -854,15 +833,15 @@ def read_aswip(ifile):
     logging.debug(f'Reading {ifile}')
 
     # https://adcirc.org/home/documentation/users-manual-v50/input-file-descriptions/single-file-meteorological-forcing-input-fort-22/
-    #           1     2         3            4        5      6     7     8     9     10     11
+    #           1      2         3              4         5       6      7      8      9      10     11
     names = ["basin", "cy", "initial_time", "technum", "model", "fhr", "lat", "lon", "vmax", "minp", "ty",
-             #     12      13         14      15       16     17       18        19       20     21       22
+             # 12      13         14      15       16     17       18        19       20     21       22
              "rad", "windcode", "rad1", "rad2", "rad3", "rad4", "pouter", "router", "rmw", "gusts", "eye",
-             #       23          24          25         26         27        28
+             #    23          24          25         26         27        28
              "subregion", "maxseas", "initials", "heading", "speed", "stormname",
-             #           29                30         31      32      33      34      35       36       37       38       39
+             #        29               30         31      32      33      34      35       36       37       38       39
              "time_record_number", "nisotachs", "use1", "use2", "use3", "use4", "rmax1", "rmax2", "rmax3", "rmax4", "HollandB",
-             #    40    41    42    43     44       45       46       47
+             #40    41    42    43     44       45       46       47
              "B1", "B2", "B3", "B4", "vmax1", "vmax2", "vmax3", "vmax4"]
 
     df = pd.read_csv(ifile, index_col=None, header=None, delimiter=",", names=names, converters=converters,
@@ -880,19 +859,18 @@ def read_aswip(ifile):
     return df
 
 
-def read(ifile, fullcircle=False):
+def read(ifile):
     """ Read data into Pandas Dataframe"""
-    logging.debug(f'Reading {ifile} fullcircle={fullcircle}')
+    logging.debug(f'Reading {ifile}')
 
     # make a copy of list, not a copy of the reference to the list.
     names = list(atcfcolumns)
 
-    reader = csv.reader(open(ifile), delimiter=',')
-    testline = next(reader)
-    num_cols = len(testline)
-    logging.debug(f"test line num_cols {num_cols}")
-    logging.debug(testline)
-    del reader
+    with csv.reader(open(ifile), delimiter=',', encoding="utf-8") as reader:
+        testline = next(reader)
+        num_cols = len(testline)
+        logging.debug(f"test line num_cols {num_cols}")
+        logging.debug(testline)
     with open(ifile) as f:
         max_num_cols = max(len(line.split(',')) for line in f)
         logging.debug(f"max number of columns {max_num_cols}")
@@ -974,10 +952,10 @@ def read(ifile, fullcircle=False):
     # logging.debug(f"dype={dtype}")
     # logging.debug(f"column_units={column_units}")
 
-    df = pd.read_csv(ifile,index_col=None,header=None, delimiter=",", usecols=usecols, names=names, 
+    df = pd.read_csv(ifile,index_col=None,header=None, delimiter=",", usecols=usecols, names=names,
             converters=converters, na_values=na_values, dtype=dtype, skipinitialspace=True, engine='c') # engine='c' is faster than engine="python"
 
-    # fort.64 has asterisks sometimes. Problem with hwrf_tracker. 
+    # fort.64 has asterisks sometimes. Problem with hwrf_tracker.
     badlines = df['lon'].str.contains("*", regex=False)
     if any(badlines):
         logging.warning(f"tossing {len(badlines)} lines with asterisk in lon")
@@ -1076,7 +1054,7 @@ def lon2s(lon):
     return lon
 
 
-def dist_bearing(lon1, lat1, lons, lats, Rearth=Rearth):
+def dist_bearing(lon1, lat1, lons, lats, Rearth=earth_avg_radius):
     """
     function to compute great circle distance between point lat1 and lon1 and arrays of points 
     INPUT:
@@ -1310,7 +1288,7 @@ def debugplot(row, lonCell, latCell, *zs, where=None):
 def derived_winds(u10, v10, mslp, lonCell, latCell,
         row: pd.Series,
         vmax_search_radius=250.*units.km,
-        mslp_search_radius=100.*units.km, 
+        mslp_search_radius=100.*units.km,
         wind_radii_method="max",
         pouter_search_radius=800*units.km,
         debug=False) -> dict:
@@ -1369,7 +1347,7 @@ def derived_winds(u10, v10, mslp, lonCell, latCell,
     # Restrict min mslp search
     mslprad = distance < mslp_search_radius
     iraw_minp = mslp.where(mslprad).argmin(dim=mslp.dims)# .min() drops units, turning Quantity into numpy array
-    raw_minp = mslp.isel(iraw_minp).data 
+    raw_minp = mslp.isel(iraw_minp).data
 
     # Get max extent of wind at thresh_kts thresholds.
     wind_radii = get_ext_of_wind(speed, distance, bearing, raw_vmax,
@@ -1428,16 +1406,10 @@ def add_wind_rad_lines(row, wind_radii):
     return pd.DataFrame(lines)
 
 
-def origgridWRF(df, griddir, grid="d03", wind_radii_method="max"):
+def origgridWRF(df, griddir, wind_radii_method="max"):
     """
     Get vmax, minp, radius of max wind, max radii of wind thresholds from WRF by Alex Kowaleski
     """
-
-    # assert this is a single track
-    assert df.groupby(['basin', 'cy', 'initial_time', 'model']
-                      ).ngroups == 1, 'got more than 1 track'
-    basin, cy, initial_time, model = df.iloc[0][[
-        'basin', 'cy', 'initial_time', 'model']]
 
     wregex = r'WF((\d\d)|(CO))'
     WRFmember = df.model.str.extract(wregex, flags=re.IGNORECASE)
@@ -1496,8 +1468,8 @@ def origgrid(df, griddir, ensemble_prefix="ens_", wind_radii_method="max"):
     # assert this is a single track
     assert df.groupby(['basin', 'cy', 'initial_time', 'model']
                       ).ngroups == 1, 'got more than 1 track'
-    basin, cy, initial_time, model = df.iloc[0][[
-        'basin', 'cy', 'initial_time', 'model']]
+    initial_time, model = df.iloc[0][[
+        'initial_time', 'model']]
 
     if isinstance(ensemble_prefix, str):
         ensemble_prefixes = [ensemble_prefix]
@@ -1544,8 +1516,7 @@ def origgrid(df, griddir, ensemble_prefix="ens_", wind_radii_method="max"):
         gridfile = os.path.join(griddir, gridfile)
         if os.path.isfile(gridfile):
             break
-        else:
-            logging.debug(f"no {gridfile}")
+        logging.debug(f"no {gridfile}")
 
     df["originalmeshfile"] = gridfile
     logging.info(f'opening {gridfile}')
@@ -1556,7 +1527,7 @@ def origgrid(df, griddir, ensemble_prefix="ens_", wind_radii_method="max"):
 
 
 def ECMWFraw_vitals(row, ds, wind_radii_method=None):
-    row = row.head(1).squeeze() # make multiple wind rad lines one series. 
+    row = row.head(1).squeeze() # make multiple wind rad lines one series.
     forecast_time0 = pd.to_timedelta(row.fhr, unit='h')
     if forecast_time0 not in ds.forecast_time0:
         print(
@@ -1597,7 +1568,7 @@ def unitless_row(derived_winds_dict, row):
     return row
 
 
-def ll_arc_distance(lat0=0*degN, lon0=0*degE, heading=0*deg, distance=0.*units.km, Rearth=Rearth):
+def ll_arc_distance(lat0=0*degN, lon0=0*degE, heading=0*deg, distance=0.*units.km, Rearth=earth_avg_radius):
 
     # Don't want to deal with Pandas indices. it will try to match them up, and you get NaNs and a bigger Series if they don't.
     lon0 = np.radians(lon0)
@@ -1690,32 +1661,3 @@ def veer_track(track, veer):
         ptrack.loc[next_time, "lat"] = newlat.m
 
     return ptrack.reset_index()
-
-
-if __name__ == "__main__":
-    df = read(ifile=sys.argv[1])
-    # df = df.loc[df.valid_time >= pd.to_datetime("20121027")]  # delay the perturbation to SANDY
-    # df = df.loc[df.valid_time <= pd.to_datetime("201210311200")]  # truncate end
-    perts = np.arange(-2, 3, 1) * \
-        units.parse_expression("deg/day")  # directional error
-    perts = np.arange(-50, 51, 25) * \
-        units.parse_expression("km/day")  # cross-track error
-    ofile = f"perts{perts[0].m}-{perts[-1].m}"
-    if os.path.exists(ofile+".dat"):
-        logging.info(f"{ofile}.dat exists already. Will append")
-    plt.figure()
-    ax = plt.axes(projection=cartopy.crs.Mercator())
-    ax = decorate_ax(ax)
-    for track_id, track_df in df.groupby(unique_track):
-        track_df = interpolate(track_df, '3H')
-        logging.info(track_id)
-        for PF, pert in enumerate(perts):
-            ptrack = cross_track(track_df, pert)
-            ptrack["model"] = "PF{:02.0f}".format(PF)
-            plot_track(ax, "", ptrack, "{:~3.1f}".format(
-                pert), label_interval_hours=24, scale=0.8)
-            write(ofile+".dat", ptrack, append=True)
-    l = TClegend()
-    plt.savefig(ofile + ".png", dpi=200)
-    print(ofile+".dat")
-    print(ofile+".png")

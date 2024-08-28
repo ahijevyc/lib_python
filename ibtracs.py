@@ -1,13 +1,9 @@
+""" TC tracks """
 import argparse
 import logging
 import os
-import pdb
 import re
-import sys
-from collections import defaultdict
-from datetime import datetime, timedelta
 
-import atcf
 import cartopy.geodesic
 import matplotlib
 import matplotlib.pyplot as plt
@@ -15,38 +11,40 @@ import numpy as np
 import pandas as pd
 import requests
 
+import atcf
+
 # Tried tkAgg for access to plt.show() interactivity but didn't work as user mpasrt with bad x11 connection
 matplotlib.use("Agg")
 
 
 IDIR = '/glade/work/ahijevyc/share/ibtracs/'
+geo = cartopy.geodesic.Geodesic()
 
 
 def get_atcfname_from_stormname_year(stormname, year, version="04r00_20230314"):
+    """ get atcf name from stormname and year """
     justname = stormname.upper()
     ifile = IDIR + "IBTrACS_SerialNumber_NameMapping_v"+version+".txt"
     logging.debug(
         f"ibtracs.get_atcfname_from_stormname_year(): searching for {stormname} {year} in {ifile}")
     atcfname = None
-    for line in open(ifile, "r"):
+    for line in open(ifile, "r", encoding="utf-8"):
         if line[0:4] == year and re.search(justname, line):
             m = re.search(r" (b[a-z][a-z]\d\d[12]\d\d\d)\[atcf\]", line)
             atcfname = m.group(1)
             return atcfname
-    if not atcfname:
-        logging.error(
-            f"ibtracs.get_atcfname_from_stormame_year(): no {stormname} {year} in {ifile}")
-        sys.exit(1)
+    assert atcfname, f"ibtracs.get_atcfname_from_stormame_year(): no {stormname} {year} in {ifile}"
 
 
 def getExt(stormname, year, trackdf, narrtimes):
+    """ get track extension for a stormname and year """
     etxt = f"/glade/scratch/ahijevyc/vortexsoutheast/inland_tc_position_dat/{stormname.capitalize()}.{year}.txt"
     if not os.path.exists(etxt):
         logging.error(f"{etxt} not found")
         return trackdf
     trackdf = trackdf.set_index("valid_time")
     assert not trackdf.index.duplicated().any(
-    ), f"ibtracs.getExt expects no duplicate valid times. Did you forget to remove 50 and 64-kt lines?"
+    ), "ibtracs.getExt expects no duplicate valid times. Did you forget to remove 50 and 64-kt lines?"
 
     # first 3-hrly time after track ends (out-of-bounds). add 1 second to ensure it is greater than last track time.
     first_oob_narrtime = (trackdf.index.max() +
@@ -64,13 +62,12 @@ def getExt(stormname, year, trackdf, narrtimes):
                      parse_dates=["valid_time"], index_col=0)
     logging.warning(f"combine {len(df)} TC locations at torn times")
     trackdf = trackdf.combine_first(df).sort_index()
-    logging.warning(f"interpolate and forward fill missing times")
+    logging.warning("interpolate and forward fill missing times")
     trackdf["lat"] = trackdf["lat"].interpolate()  # forward-fill last position
     trackdf["lon"] = trackdf["lon"].interpolate()
 
     # Fill in speed and heading also.
     points = np.column_stack((trackdf.lon, trackdf.lat))
-    geo = cartopy.geodesic.Geodesic()
     # returns np.ndarray shape=(n, 3) - dist in m, and forward azimuths of start and end pts.
     n3 = geo.inverse(points[:-1], points[1:])
     dist = n3[:, 0]
@@ -92,6 +89,7 @@ def getExt(stormname, year, trackdf, narrtimes):
 
 
 def ibtracs_to_atcf(df):
+    """ Convert to atcf """
 
     columns = {
         "BASIN": "basin",
@@ -147,14 +145,17 @@ def ibtracs_to_atcf(df):
                          "rad1", "rad2", "rad3", "rad4"], i="id", j="rad", sep="-")
     # Bring "rad" MultiIndex level back into columns.
     df = df.reset_index()
+    # atcf.write needs "rad" as string.
+    df["rad"] = df["rad"].astype(str)
 
     return df
 
 
 def get_df(stormname=None, year=None, version="04r00", basin="ALL"):
-
-    # Get "ALL" file by default.
-    # Specify basin keyword to read a smaller, specialized file.
+    """
+    Get "ALL" file by default.
+    Specify basin keyword to read a smaller, specialized file.
+    """
 
     dtype = {
         'DS824_STAGE': str,
@@ -177,7 +178,7 @@ def get_df(stormname=None, year=None, version="04r00", basin="ALL"):
         url += "international-best-track-archive-for-climate-stewardship-ibtracs/"
         url += "v"+version+"/access/csv/ibtracs."+region+".list.v"+version+".csv"
         logging.debug(f"{ifile} not found. Downloading from {url}")
-        myfile = requests.get(url)
+        myfile = requests.get(url, timeout=60)
         open(ifile, "wb").write(myfile.content)
     # keep_default_na=False . we don't want "NA" or North Atlantic to be treated as NA/NaN.
     # Skip row 1 (contains units)
@@ -214,7 +215,7 @@ def get_stormname_from_atcfname(atcf_filename, version="04r00_20200308"):
     stormname = None
     logging.debug(
         f"ibtracs.get_stormname_from_atcfname(): searching for {bname} in {ifile}")
-    for line in open(ifile, "r"):
+    for line in open(ifile, "r", encoding="utf-8"):
         if re.search(bname, line):
             m = re.search(r" ([A-Z_]+)\[", line)
             stormname = m.group(1)
@@ -226,7 +227,7 @@ def get_stormname_from_atcfname(atcf_filename, version="04r00_20200308"):
     return stormname
 
 def extension(df):
-
+    """ extend track """
     logging.info("use last line of ISAAC 2012 as template for extension")
     template = df[(df.SEASON == 2012) & (df.NAME == "ISAAC")].iloc[-1]
     # tracked manually in 700mb wind in NARR
@@ -244,7 +245,6 @@ def extension(df):
     # Fix new speed and headings. They were simply copied from last row of ISAAC
     newdf = pd.DataFrame(newrows)
     points = np.column_stack((newdf.LON, newdf.LAT))
-    geo = cartopy.geodesic.Geodesic()
     # returns np.ndarray shape=(n, 3) - dist in m, and forward azimuths of start and end pts.
     n3 = geo.inverse(points[:-1], points[1:])
     dist = n3[:, 0]
@@ -277,15 +277,12 @@ def main():
     season = args.season
     png = os.path.realpath(os.path.join(args.outdir, stormname+season+".png"))
     dat = os.path.realpath(os.path.join(args.outdir, stormname+season+".dat"))
-    if os.path.exists(png):
-        logging.warning(f"found {png} Exiting")
-        sys.exit(1)
-    if os.path.exists(dat):
-        logging.warning(f"found {dat} Exiting")
-        sys.exit(1)
-    ax = atcf.get_ax()
-    track_df, ifile = get_atcf(stormname, season, basin=args.basin)
-    atcf.write(dat, track_df)
+    assert not os.path.exists(png), f"found {png} Exiting"
+    assert not os.path.exists(dat), f"found {dat} Exiting"
+    fig, ax = plt.subplots(subplot_kw={"projection":cartopy.crs.PlateCarree()})
+    ax = atcf.decorate_ax(ax)
+    track_df, ifile = get_df(stormname, season, basin=args.basin)
+    atcf.write(track_df, dat)
     logging.info(f"created {dat}")
     start_label = ""
     end_label = ""
