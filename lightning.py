@@ -1,14 +1,21 @@
 """
 get lightning observations
 """
-import cartopy.crs as ccrs
 import logging
 import os
 from pathlib import Path
 
-import G211
+import cartopy.crs as ccrs
 import geopandas
+import pandas as pd
+from matplotlib.colors import ListedColormap
+
+import G211
+import nclcmaps
 from ml_functions import load_df
+
+test = nclcmaps.colors["MPL_Greys"][6:-25:] + nclcmaps.colors["MPL_Reds"]
+cmap = ListedColormap(test, "GreysReds")
 
 
 def get_obsgdf(args, valid_start, valid_end, obsvar, rptdist):
@@ -26,7 +33,6 @@ def get_obsgdf(args, valid_start, valid_end, obsvar, rptdist):
     obsgdf = obsgdf.set_crs(ccrs.PlateCarree())
 
     return obsgdf
-
 
 def get_obs(valid_start, valid_end, obsvar, twin, rptdist):
     if obsvar in ["cg", "ic", "cg.ic"]:
@@ -113,11 +119,12 @@ def ztfs(x, how="nearest"):
     """
     assert x >= 0
     assert x <= 1
+    eps = 1e-12
     if how == "floor":
         if x < 0.1:
             return 0
         if x < 0.4:
-            return 0.1
+            return 0.1 + eps # avoid floating point 0.1->0.099999999
         if x < 0.7:
             return 0.4
         return 0.7
@@ -125,7 +132,7 @@ def ztfs(x, how="nearest"):
         if x < 0.05:
             return 0
         if x < 0.25:
-            return 0.1
+            return 0.1 + eps
         if x < 0.55:
             return 0.4
         return 0.7
