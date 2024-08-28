@@ -15,9 +15,8 @@ ftype_dim = {"event": "number_of_events",
 
 # path to save GLM files
 # Use environmental variable GLMDIR if it exists.
-# Otherwise /glade/scratch/$USER
-GLMDIR = os.getenv("GLMDIR", "/glade/scratch/" +
-                   os.getenv("USER", "ahijevyc")+"/")
+# Otherwise $SCRATCH
+GLMDIR = os.getenv("GLMDIR", os.getenv("SCRATCH")) + "/" # s3fs.get requires '/'
 
 
 def get_das(ds: xarray.DataArray) -> tuple[dict, dict]:
@@ -47,11 +46,11 @@ def download(start, end, bucket="noaa-goes16", product="GLM-L2-LCFA", odir=GLMDI
             logging.error(f"{path} not found")
             sys.exit(1)
 
-        if files is None or len(files) == 0:
-            logging.error(f"No files match {path}")
-            path = "/".join(path.split("/")[:-1])  # parent directory
-            logging.error(f"choices {fs.ls(path)}")
-            sys.exit(1)
+        parentpath = "/".join(path.split("/")[:-1])  # parent directory
+        assert files, (
+            f"No files match {path}\n"
+            f"choices {fs.ls(parentpath)}"
+        )
 
         logging.debug(f"{len(files)} files {odir}")
         for f in files:
@@ -69,7 +68,7 @@ def download(start, end, bucket="noaa-goes16", product="GLM-L2-LCFA", odir=GLMDI
                     logging.warning(f"{f} zero size. downloading again")
                 # Avoid FileNotFoundError: [Errno 2] No such file or directory:
                 os.makedirs(os.path.dirname(odir+f), exist_ok=True)
-                fs.get(f, odir+f)  # TODO: catch s3fs FileNotFoundError
+                fs.get_file(f, odir+f)  # TODO: catch s3fs FileNotFoundError
                 logging.info(f"downloaded {f}")
             ofiles.append(odir+f)
 
