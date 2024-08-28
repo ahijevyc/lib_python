@@ -33,7 +33,7 @@ class CacheHandler(urllib.request.BaseHandler):
         if request.data is not None:
             url = url + "?" + request.data.decode()
         if CachedResponse.ExistsInCache(self.cacheLocation, url):
-            logging.debug(f"CacheHandler: Returning CACHED response for {url}")
+            logging.debug(f"CacheHandler: Returning CACHED response for {url} in {self.cacheLocation}")
         else:
             logging.debug(f"CacheHandler: request {url}")
             response = urllib.request.urlopen(url)
@@ -52,6 +52,12 @@ class CachedResponse(io.StringIO):
         url = url.encode('ascii')
         hash = hashlib.md5(url).hexdigest()
         cacheLocation = Path(cacheLocation)
+        logging.debug(hash)
+        body = cacheLocation / (hash + ".body")
+        if os.path.exists(body): 
+            assert body.stat().st_size, (
+                f'{body} is zero size'
+            )
         return (os.path.exists(cacheLocation / (hash + ".headers")) and
                 os.path.exists(cacheLocation / (hash + ".body")))
     ExistsInCache = staticmethod(ExistsInCache)
