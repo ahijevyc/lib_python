@@ -1,4 +1,5 @@
 """get, analyze, plot SPC storm reports"""
+from collections import OrderedDict # for color table dict
 import datetime
 import logging
 import os  # for basename
@@ -394,16 +395,15 @@ def get_storm_reports(
     return all_rpts
 
 
-def symbol_dict(scale=1):
+def symbol_dict():
     """ Color, size, marker, and label of wind, hail, and tornado storm reports"""
     d = {
-        "wind": {"c": 'blue', "s": 8 * scale, "marker": "s", "label": "Wind"},
-        "high wind": {"c": 'black', "s": 12 * scale, "marker": "s", "label": "Wind/65kt+"},
-        "hail": {"c": 'green', "s": 12 * scale, "marker": "^", "label": "Hail"},
-        "large hail": {"c": 'black', "s": 16 * scale, "marker": "^", "label": 'Hail/2"+'},
-        # pink was okay too
-        "torn": {"c": 'red', "s": 6 * scale, "marker": "v", "label": "Torn"},
-        "sigtorn": {"c": 'red', "s": 12 * scale, "marker": "v", "label": "Torn/EF2+"}
+        "wind": {"c": 'blue', "s": 8, "marker": "s", "label": "Wind"},
+        "high wind": {"c": 'black', "s": 12, "marker": "s", "label": "Wind/65kt+"},
+        "hail": {"c": 'green', "s": 12, "marker": "^", "label": "Hail"},
+        "large hail": {"c": 'black', "s": 16, "marker": "^", "label": 'Hail/2"+'},
+        "torn": {"c": 'red', "s": 6, "marker": "v", "label": "Torn"},
+        "sigtorn": {"c": 'red', "s": 12, "marker": "v", "label": "Torn/EF2+"}
     }
     for k in d:
         d[k]["edgecolors"] = "black"
@@ -769,7 +769,7 @@ def polarplot(
         return storm_reports
 
     # Color, size, marker, and label of wind, hail, and tornado storm reports
-    kwdict = symbol_dict(scale=scale)
+    kwdict = symbol_dict()
 
     dist_from_origin, heading = gdist_bearing(
         originlon, originlat, storm_reports["slon"].values * units.degrees_E, storm_reports["slat"].values * units.degrees_N)
@@ -845,7 +845,7 @@ def plot(
         return storm_rpts_plots
 
     # Color, size, marker, and label of wind, hail, and tornado storm reports
-    kwdict = symbol_dict(scale=scale)
+    kwdict = symbol_dict()
 
     if onecolor:
         for k in kwdict:
@@ -1066,17 +1066,27 @@ def get_outlooks(idir=Path(os.getenv('TMPDIR'))):
     return agdf
 
 
-# color map for SPC outlook
-convective_outlook_colors = {"TSTM": 'palegreen',
-                             "MRGL": 'green',
-                             "SLGT": 'yellow',
-                             "ENH": 'goldenrod',
-                             "MDT": 'red',
-                             "HIGH": 'magenta'}
-# color map for SPC enhanced tstm outlook
-enhtstm_colors = {10: '#803E22',
-                  40: '#75FFFF',
-                  70: '#FF0000'}
+# color map for SPC convective outlook
+convective_outlook_colors = OrderedDict(
+        {
+            "TSTM": 'palegreen',
+            "MRGL": 'green',
+            "SLGT": 'yellow',
+            "ENH": 'goldenrod',
+            "MDT": 'red',
+            "HIGH": 'magenta'
+         }
+)
+
+# color map for SPC tstm outlook
+enhtstm_colors = OrderedDict(
+        {
+            0:"white",
+            10: '#803E22',
+            40: '#75FFFF',
+            70: '#FF0000'
+            }
+        )
 
 
 def get_issuance_time(zipfilename: str):
@@ -1088,30 +1098,54 @@ def get_issuance_time(zipfilename: str):
       -  valid start hour
       -  valid end hour
       -  valid_start_day
-    Assert valid_start, valid_end and issuance time string are consistent
+      - enhaa_bbbbbbbb_ccdd00_eeeeeeeeeeee-shp.zip
+          - where aa is valid_end_hour
+          - bbbbbbbb is issuance date (yyyymmdd)
+          - cc is valid_start_day
+          - dd is valid_start_hour
+          - 00 is valid_start_minute (always '00')
+          - eeeeeeeeeeee is issuance datetime (yyyymmddHHMM)
+          - Why include issuance date and issuance datetime? I don't know.
+    Assert valid_start, valid_end and issuance times are consistent
     and expected.
     Return
-    4-character issuance time string, valid_start, valid_end
+    4-character issuance time string (HHMM), valid_start, valid_end
     """
     z = os.path.basename(zipfilename)
-    # datetime.datetime.strptime 8x faster than pd.to_datetime
-    prodiss = datetime.datetime.strptime(z[-20:-8], '%Y%m%d%H%M')
-    valid_start_hour = int(z[17:19])
+    if z.endswith(".zip"):
+        assert len(z) == 42, f"expected 42 char in zipfilename {z} got {len(z)}"
+    assert z.startswith('enh'), f"expected zipfilename starts with 'enh' {z}"
     valid_end_hour = int(z[3:5])
-    valid = (valid_start_hour, valid_end_hour)
-    valid_start_day = int(z[15:17])
+    # datetime.datetime.strptime 8x faster than pd.to_datetime
     idate = datetime.datetime.strptime(z[6:14], '%Y%m%d')
-    valid_same_day = idate.day == valid_start_day
-    d = 0 if valid_same_day else 1
+    valid_start_day = int(z[15:17])
+    valid_start_hour = int(z[17:19])
+    valid_start_minute = z[19:21]
+    assert valid_start_minute == "00", (
+        f"unexpected valid_start_minute {valid_start_minute} in {z}"
+    )
+    prodiss = datetime.datetime.strptime(z[22:34], '%Y%m%d%H%M')
+
+    valid = (valid_start_hour, valid_end_hour)
+    if idate.day > valid_start_day and valid_start_day != 1:
+        logging.warning(
+        f"issuance day {idate.day} after valid_start_day {valid_start_day} {z}"
+    )
+    valid_start_same_day_as_issue = idate.day == valid_start_day
+    d = 0 if valid_start_same_day_as_issue else 1
     valid_start = idate + \
         datetime.timedelta(hours=valid_start_hour) + datetime.timedelta(days=d)
     if valid_end_hour < valid_start_hour:
         d = d + 1
     valid_end = idate + \
         datetime.timedelta(hours=valid_end_hour) + datetime.timedelta(days=d)
-    assert valid_start < valid_end, f"valid start {valid_start} before valid end {valid_end}"
+    if valid_start >= valid_end:
+        logging.error(
+        f"valid start {valid_start} not before valid end {valid_end}"
+    )
+    issue = None
     if valid == (4, 12):
-        if valid_same_day:
+        if valid_start_same_day_as_issue:
             issue = "0130"
         else:
             if prodiss < idate + datetime.timedelta(hours=17):
@@ -1119,7 +1153,8 @@ def get_issuance_time(zipfilename: str):
             else:
                 issue = "2100"
     elif valid == (0, 4):
-        assert not valid_same_day
+        if valid_start_same_day_as_issue:
+            logging.warning(f"valid={valid} but valid_start same day as issue {z}")
         if prodiss < idate + datetime.timedelta(hours=13):
             issue = "1300"
         elif prodiss < idate + datetime.timedelta(hours=17):
@@ -1127,7 +1162,8 @@ def get_issuance_time(zipfilename: str):
         else:
             issue = "2100"
     elif valid == (20, 0):
-        assert valid_same_day
+        if not valid_start_same_day_as_issue:
+            logging.warning(f"valid={valid} but valid_start_day != issue {z}")
         if prodiss < idate + datetime.timedelta(hours=6):
             issue = "0600"
         elif prodiss < idate + datetime.timedelta(hours=13):
@@ -1135,17 +1171,20 @@ def get_issuance_time(zipfilename: str):
         else:
             issue = "1700"
     elif valid == (16, 20):
-        assert valid_same_day
+        if not valid_start_same_day_as_issue:
+            logging.warning(f"valid={valid} but valid_start_day != issue {z}")
         if prodiss < idate + datetime.timedelta(hours=6):
             issue = "0600"
         else:
             issue = "1300"
     elif valid == (12, 16):
-        assert valid_same_day
+        if not valid_start_same_day_as_issue:
+            logging.warning(f"valid={valid} but valid_start_day != issue {z}")
         issue = "0600"
     else:
-        logging.error(f"unexpected valid range {valid}")
+        logging.error(f"unexpected valid range {valid} {z}")
 
-    assert issue in ["0600", "1300", "1700", "2100", "0130"]
+    if issue is not None:
+        assert issue in ["0600", "1300", "1700", "2100", "0130"], f"unexpected issue {issue}"
 
     return issue, valid_start, valid_end
