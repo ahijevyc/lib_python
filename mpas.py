@@ -52,10 +52,6 @@ def origmesh(df: pd.DataFrame, initfile, diagdir, wind_radii_method="max"):
                or a dictionary containing mesh cells lat/lon (faster)
      diagdir = path to directory with diagnostics files.
     """
-    # assert this is a single track
-    assert df.groupby(['basin', 'cy', 'initial_time', 'model']
-                      ).ngroups == 1, 'mpas.origmesh got more than 1 track'
-
     # The first time this is called initfile is a simple string.
     # Next time, it is a dictionary with all the needed variables.
     if isinstance(initfile, str):
