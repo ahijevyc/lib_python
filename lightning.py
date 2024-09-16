@@ -37,10 +37,14 @@ def get_obsgdf(args, valid_start, obsvar, rptdist):
     return obsgdf
 
 def get_obs(valid_start, valid_end, obsvar, twin, rptdist):
+    assert obsvar in ["cg", "ic", "cg.ic", "flashes"], f"unexpected obsvar {obsvar}" 
     if obsvar in ["cg", "ic", "cg.ic"]:
+        # Earth Networks (previously WeatherBug) Total Lightning Network (ENTLN)
         # Add up lighting counts in 30-minute blocks spanning [valid_start, valid_end).
-        # wbug lightning counts are indexed by time_coverage_start, so
-        # the slice starts at valid_start and ends 30 minutes prior to valid_end.
+        # cgds lightning counts are indexed by time_coverage_start. time_coverage_start
+        # is the same thing as valid_start. Therefore, we want the index slice to be
+        # slice(valid_start, valid_end - pd.Timedelta(minutes=30)). Because slice start and end are
+        # inclusive, the slice end must be 30 minutes before valid_end.
         # Don't expect to find all 30-min blocks within valid time range.
         # If there is no lightning, that 30-min block will be missing.
         # So select with a time slice, not a list of 30-min blocks.
