@@ -36,7 +36,7 @@ def get_obsgdf(args, valid_start, obsvar, rptdist):
 
     return obsgdf
 
-def get_obs(valid_start, valid_end, obsvar, twin, rptdist):
+def get_obs(valid_start:pd.Timestamp, valid_end:pd.Timestamp, obsvar:str, twin:float, rptdist: float):
     assert obsvar in ["cg", "ic", "cg.ic", "flashes"], f"unexpected obsvar {obsvar}" 
     if obsvar in ["cg", "ic", "cg.ic"]:
         # Earth Networks (previously WeatherBug) Total Lightning Network (ENTLN)
@@ -116,7 +116,7 @@ def get_obs(valid_start, valid_end, obsvar, twin, rptdist):
     return ds
 
 
-def ztfs(x, how="nearest"):
+def ztfs(x, how: str="nearest"):
     """
     zero, ten, forty, seventy
     If how="floor", round x DOWN to nearest probability level of
