@@ -1,1 +1,1 @@
-/glade/derecho/scratch/ahijevyc/HWT_mode/hwtmode/statisticplot.py
+/glade/work/ahijevyc/NSC_objects/statisticplot.py
