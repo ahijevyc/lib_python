@@ -4,6 +4,7 @@ import logging
 import os
 import pdb
 import sys
+from typing import Tuple
 
 import numpy as np
 import pandas as pd
@@ -19,7 +20,7 @@ ftype_dim = {"event": "number_of_events",
 GLMDIR = os.getenv("GLMDIR", os.getenv("SCRATCH")) + "/" # s3fs.get requires '/'
 
 
-def get_das(ds: xarray.DataArray) -> tuple[dict, dict]:
+def get_das(ds: xarray.DataArray) -> Tuple[dict, dict]:
     # dictionary of DataArrays associated with each ftype
     das = {}
     coords = {}
