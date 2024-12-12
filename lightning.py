@@ -128,19 +128,18 @@ def ztfs(x, how: str="nearest"):
     eps = 1e-12
     if how == "floor":
         if x < 0.1:
-            i = 0
+            return 0
         if x < 0.4:
-            i = 0.1 + eps # avoid floating point 0.1->0.099999999
+            return 0.1 + eps # avoid floating point 0.1->0.099999999
         if x < 0.7:
-            i = 0.4
-        i = 0.7
+            return 0.4
+        return 0.7
     else:
         assert how == "nearest"
         if x < 0.05:
-            i = 0
+            return 0
         if x < 0.25:
-            i = 0.1 + eps
+            return 0.1 + eps
         if x < 0.55:
-            i = 0.4
-        i = 0.7
-    return i
+            return 0.4
+        return 0.7
