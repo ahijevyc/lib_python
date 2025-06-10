@@ -12,7 +12,7 @@ from matplotlib.colors import ListedColormap
 from scipy import spatial
 import xarray
 
-import G211
+from ahijevyc import G211
 import nclcmaps
 from ml_functions import load_df
 
