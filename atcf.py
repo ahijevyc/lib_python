@@ -21,7 +21,7 @@ import pint
 import xarray
 from scipy.stats import circmean  # for averaging longitudes
 
-import spc
+from ahijevyc import spc
 
 basin_bounds = {
     "al": (-99, -22, 0, 38),

@@ -23,8 +23,7 @@ class CacheHandler(urllib.request.BaseHandler):
     def __init__(self, cacheLocation):
         """The location of the cache directory"""
         self.cacheLocation = cacheLocation
-        if not os.path.exists(self.cacheLocation):
-            os.mkdir(self.cacheLocation)
+        os.makedirs(self.cacheLocation, exist_ok=True)
 
     def default_open(self, request):
         url = request.full_url

@@ -1,1 +1,0 @@
-/glade/derecho/scratch/ahijevyc/vortexsoutheast/scripts/narr.py
