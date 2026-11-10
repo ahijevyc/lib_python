@@ -37,7 +37,7 @@ def download(start, end, bucket="noaa-goes16", product="GLM-L2-LCFA", odir=GLMDI
     end = pd.to_datetime(end)  # allow strings
     fs = s3fs.S3FileSystem(anon=True)
     ofiles = []
-    for hourly in pd.date_range(start=start, end=end, freq='1H'):
+    for hourly in pd.date_range(start=start, end=end, freq='1h'):
         # download all files in an hourly directory
         path = f'{bucket}/{product}/{hourly.year}/{hourly.timetuple().tm_yday:03.0f}/{hourly.hour:02.0f}'
         logging.info(f"fs.ls({path})")
