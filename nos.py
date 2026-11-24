@@ -1,1 +1,0 @@
-/glade/derecho/scratch/ahijevyc/storm_surge_prediction/scripts/nos.py

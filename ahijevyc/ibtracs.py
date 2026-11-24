@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import requests
 
-import atcf
+from ahijevyc import atcf
 
 # Tried tkAgg for access to plt.show() interactivity but didn't work as user mpasrt with bad x11 connection
 matplotlib.use("Agg")

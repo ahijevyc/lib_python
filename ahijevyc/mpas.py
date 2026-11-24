@@ -5,13 +5,13 @@ import pdb
 import re
 import sys
 
-import atcf
+from ahijevyc import atcf
 import numpy as np
 import pandas as pd
 import xarray
 from netCDF4 import Dataset
 
-from fieldinfo import fieldinfo, readNCLcm
+from ahijevyc.fieldinfo import fieldinfo, readNCLcm
 
 
 def get_diag_name(valid_time, prefix='diag.', suffix='.nc'):
